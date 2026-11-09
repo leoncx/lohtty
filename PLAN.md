@@ -265,12 +265,12 @@ Each milestone ends with a runnable build.
   - `scripts/package.ps1` builds `dist/lohtty-<version>-windows-x64.zip` (3.6 MB).
   - `release.yml` publishes the zip when a `v*` tag is pushed.
 - **Docs:** `README.md` covers features, config, themes, shortcuts and troubleshooting.
+- **License:** Apache-2.0, chosen by the owner. The text is in `LICENSE`, it is set in `Cargo.toml`, and it ships in the zip.
 
 *Open items (blocking a v1.0 tag):*
 - **vttest/esctest:** these need a Unix environment. The dev machine's WSL only has Rancher Desktop's internal distros. Install a regular distro (for example `wsl --install Ubuntu`) and then run `vttest` inside lohtty.
 - **Render cost while streaming:** profile it (for example with `samply`) before optimizing. Candidates are caching per-row segments and skipping unchanged rows.
 - **Input latency:** not measured yet. It needs a high-speed camera or a tool such as Typometer.
-- **License:** `Cargo.toml` says `license = "MIT"`, but that was a placeholder chosen during M0. The owner needs to confirm it before adding a LICENSE file to the package.
 - **Later:** an MSI installer, a macOS `.app` and a Linux AppImage.
 
 **M7 — Kitty graphics protocol** *(optional, last)*

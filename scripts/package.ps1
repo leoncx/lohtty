@@ -15,7 +15,7 @@ try {
 
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
     New-Item -ItemType Directory -Force $stage | Out-Null
-    Copy-Item (Join-Path $root 'target/release/lohtty.exe'), (Join-Path $root 'README.md') $stage
+    Copy-Item (Join-Path $root 'target/release/lohtty.exe'), (Join-Path $root 'README.md'), (Join-Path $root 'LICENSE') $stage
 
     $zip = Join-Path $dist "$name.zip"
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force

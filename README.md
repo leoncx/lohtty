@@ -111,3 +111,7 @@ Mouse:
   *Symbols Nerd Font Mono*) or list one in `font.fallbacks`.
 - **Logs.** Set `LOHTTY_LOG=debug` (or `lohtty_term::pty=trace` for raw
   shell output) and start lohtty from another terminal. Logs go to stderr.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
