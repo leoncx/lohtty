@@ -2,12 +2,11 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use gpui::{
-    App, Application, Bounds, TitlebarOptions, WindowBackgroundAppearance, WindowBounds,
-    WindowOptions, prelude::*, px, size,
+    App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size,
 };
 use lohtty_config::Config;
 use lohtty_theme::Theme;
-use lohtty_ui::Workspace;
+use lohtty_ui::{Workspace, load_theme, window_background};
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -22,24 +21,23 @@ fn main() {
         tracing::error!("{e}; falling back to defaults");
         Config::default()
     });
-    let theme = Theme::default();
+    let theme = load_theme(&config).unwrap_or_else(|e| {
+        tracing::error!("{e}; falling back to the default theme");
+        Theme::default()
+    });
 
     Application::new().run(move |cx: &mut App| {
+        lohtty_ui::init(cx);
+
         let win = &config.window;
         let bounds = Bounds::centered(None, size(px(win.width), px(win.height)), cx);
-        let window_background = match (win.opacity < 1.0, win.blur) {
-            (false, _) => WindowBackgroundAppearance::Opaque,
-            (true, false) => WindowBackgroundAppearance::Transparent,
-            (true, true) => WindowBackgroundAppearance::Blurred,
-        };
-
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
                 title: Some("lohtty".into()),
                 ..Default::default()
             }),
-            window_background,
+            window_background: window_background(win),
             app_id: Some("lohtty".into()),
             ..Default::default()
         };

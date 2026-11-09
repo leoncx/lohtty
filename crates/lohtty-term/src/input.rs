@@ -1,4 +1,4 @@
-//! Keyboard → xterm byte sequences.
+//! Keyboard and paste → xterm byte sequences.
 
 use alacritty_terminal::term::TermMode;
 
@@ -157,9 +157,36 @@ fn named_key(k: &KeyInput, mode: TermMode) -> Option<Vec<u8>> {
     })
 }
 
+/// Prepares clipboard text for the PTY: newlines become carriage returns (as
+/// if typed), and in bracketed-paste mode the text is wrapped in
+/// `ESC[200~ … ESC[201~` with any embedded ESC removed, so pasted content can
+/// never end the bracket early or inject escape sequences.
+pub fn encode_paste(text: &str, mode: TermMode) -> Vec<u8> {
+    let normalized = text.replace("\r\n", "\r").replace('\n', "\r");
+    if mode.contains(TermMode::BRACKETED_PASTE) {
+        let mut out = b"\x1b[200~".to_vec();
+        out.extend(normalized.bytes().filter(|&b| b != 0x1b));
+        out.extend_from_slice(b"\x1b[201~");
+        out
+    } else {
+        normalized.into_bytes()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paste_normalizes_newlines() {
+        assert_eq!(encode_paste("a\r\nb\nc", TermMode::empty()), b"a\rb\rc");
+    }
+
+    #[test]
+    fn bracketed_paste_wraps_and_strips_escapes() {
+        let out = encode_paste("ls\n\x1b[201~rm -rf /", TermMode::BRACKETED_PASTE);
+        assert_eq!(out, b"\x1b[200~ls\r[201~rm -rf /\x1b[201~");
+    }
 
     fn enc(k: KeyInput) -> Vec<u8> {
         encode_key(&k, TermMode::empty()).unwrap()

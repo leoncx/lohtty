@@ -1,6 +1,10 @@
-//! User configuration (`config.toml`). Hot reload arrives in M2.
+//! User configuration (`config.toml`) and live reload.
+
+mod watch;
 
 use std::path::PathBuf;
+
+pub use watch::ConfigWatcher;
 
 use serde::Deserialize;
 
@@ -94,10 +98,20 @@ impl Default for WindowConfig {
     }
 }
 
+/// `%APPDATA%\lohtty` on Windows, `$XDG_CONFIG_HOME/lohtty` elsewhere.
+pub fn config_dir() -> Option<PathBuf> {
+    dirs::config_dir().map(|d| d.join("lohtty"))
+}
+
+/// User themes: `<config dir>/themes/<name>.toml`.
+pub fn themes_dir() -> Option<PathBuf> {
+    config_dir().map(|d| d.join("themes"))
+}
+
 impl Config {
-    /// `%APPDATA%\lohtty\config.toml` on Windows, `$XDG_CONFIG_HOME/lohtty/config.toml` elsewhere.
+    /// `<config dir>/config.toml`.
     pub fn default_path() -> Option<PathBuf> {
-        dirs::config_dir().map(|d| d.join("lohtty").join("config.toml"))
+        config_dir().map(|d| d.join("config.toml"))
     }
 
     pub fn parse(src: &str, path: PathBuf) -> Result<Self, ConfigError> {

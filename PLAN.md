@@ -32,12 +32,11 @@ lohtty/
 ├── SPEC.md
 ├── PLAN.md
 ├── assets/
-│   ├── themes/tokyo-night.toml (+ storm, moon, day)
 │   └── icons/lohtty.ico
 ├── crates/
 │   ├── lohtty/                # binary: main.rs, app bootstrap, actions, keymap
 │   ├── lohtty-config/         # config schema, loading, defaults, hot reload
-│   ├── lohtty-theme/          # Theme struct, palette (16 ANSI + 256 + truecolor), loader
+│   ├── lohtty-theme/          # Theme struct, TOML loader; themes/*.toml bundled (Tokyo Night + storm, moon, day)
 │   ├── lohtty-term/           # Terminal session: PTY, alacritty Term, events, search
 │   ├── lohtty-graphics/       # OPTIONAL (feature `kitty-graphics`): parser, image store, placements
 │   └── lohtty-ui/             # gpui views: Workspace, TabBar, PaneGroup, TerminalView, SearchBar
@@ -171,12 +170,19 @@ Each milestone ends with a runnable build.
 - Text input goes through gpui's `EntityInputHandler` (WM_CHAR and IME). `key_down` only encodes control, alt and named keys. Dead keys on Windows need special handling: see `TerminalView::pending_dead_key`.
 - Open TODOs: the synchronized-update (mode 2026) timeout, mouse reporting (moved to M2), and drawing the IME composition text (M4).
 
-**M2 — Config, theme, shell selection, title**
+**M2 — Config, theme, shell selection, title** — **done**
 - `lohtty-config` with defaults and hot reload, `lohtty-theme` loader, bundled Tokyo Night variants.
 - Shell selection from config.
 - OSC title → window title.
 - Selection, copy/paste (Ctrl+Shift+C/V), and bracketed paste.
 - Mouse reporting (SGR 1006 and normal modes) for TUI apps.
+
+*Implementation notes from M2:*
+- The watcher covers the whole config directory (`config.toml` and `themes/*.toml`), with a 100 ms debounce. An invalid config or unknown theme keeps the previous settings and shows a red error bar until the next successful reload. Font changes apply live; shell changes affect new sessions only.
+- User themes live in `<config dir>/themes/<name>.toml` and override bundled themes of the same name.
+- Copy/Paste are gpui actions bound in the `Terminal` key context. gpui matches bindings before `on_key_down`, which M3's tab and split shortcuts will rely on too. The bindings are Ctrl+Shift+C/V and Ctrl/Shift+Insert, plus Cmd+C/V on macOS. Right click copies the selection, or pastes when nothing is selected (as in Windows Terminal).
+- Selection supports drag, double-click for a word and triple-click for a line. Shift forces local selection while an app has mouse reporting enabled. Focus in/out reporting (mode 1004) is supported.
+- Open TODO: auto-scroll while drag-selecting past the top or bottom edge.
 
 **M3 — Tabs & splits**
 - Workspace, TabBar, and PaneGroup split tree with focus management and divider dragging.

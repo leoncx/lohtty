@@ -3,6 +3,7 @@
 
 mod filter;
 pub mod input;
+pub mod mouse;
 mod session;
 mod shell;
 
