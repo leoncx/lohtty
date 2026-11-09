@@ -33,3 +33,11 @@ all = { level = "warn", priority = -1 }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+# Release optimizations plus line tables, for profilers:
+#   cargo build --profile profiling
+# The PDB has function names and lines (dbghelp resolves them); samply may
+# still show placeholder names for lohtty.exe, so symbolize against this PDB.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"

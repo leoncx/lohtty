@@ -277,6 +277,12 @@ Each milestone ends with a runnable build.
   - **Output frame cap:** `MIN_OUTPUT_FRAME` (12 ms) applies only while output streams. Isolated output, like a keystroke's echo, still paints immediately.
   - **Remaining cost:** shaping about 70 new rows per frame (DirectWrite). The layout cache can't help, because every row is new text during a flood.
   - Wall time is unchanged at about 7 s, because ConPTY is the bottleneck.
+- **Sampling profile** (samply, 14 MB `cat`, profiling build). UI-thread CPU over the 33 s session was 2.69 s; the PTY reader used only 0.11 s.
+  - **Startup:** about 190 ms of NVIDIA driver signature checks (`nvldumdx.dll` → wintrust) when gpui creates the D3D device. This happens once and isn't lohtty code.
+  - **Flood:** about 185 ms of CPU per second (18.5% of a core). Of that, `FramePainter::prepaint` takes ~107 ms/s, 95% of which is `shape_line`, i.e. DirectWrite and TextShaping plus their heap allocations. lohtty's own grid walk is 2% of `prepaint`. gpui glyph painting (`paint_glyph`, `raster_bounds`, atlas lookups) is about 7% of the thread.
+  - **Idle:** about 17 ms/s (1.7%), mostly kernel time in `NtUserGetMessage` while gpui's Windows run loop wakes for its frame timer. That's gpui behaviour.
+  - **Next lever if needed:** a fast path that skips DirectWrite shaping for rows without ligature candidates (cache glyph ids per character and font, then `paint_glyph` at cell positions). This is a sizeable change and isn't scheduled.
+  - **Symbolizing:** samply showed placeholder names (`fun_*`) for `lohtty.exe`. Symbolize the profile's addresses against `target/profiling/lohtty.pdb` with dbghelp (`SymFromAddrW`, without `SYMOPT_DEFERRED_LOADS`).
 - **License:** Apache-2.0, chosen by the owner. The text is in `LICENSE`, it is set in `Cargo.toml`, and it ships in the zip.
 
 *Open items (blocking a v1.0 tag):*
