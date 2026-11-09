@@ -1,0 +1,18 @@
+[package]
+name = "lohtty-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+gpui.workspace = true
+lohtty-config.workspace = true
+lohtty-theme.workspace = true
+lohtty-term.workspace = true
+alacritty_terminal = "0.26"
+async-channel = "2.5"
+anyhow.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
