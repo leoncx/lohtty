@@ -4,17 +4,19 @@ mod input;
 mod paint;
 
 use std::cell::Cell;
+use std::collections::HashSet;
 use std::rc::Rc;
+use std::sync::{Arc, OnceLock};
 
 use alacritty_terminal::index::Side;
 use alacritty_terminal::term::TermMode;
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, DispatchPhase, ElementInputHandler,
-    EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle, FontWeight, IntoElement,
-    KeyBinding, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Subscription, Task, Window,
-    actions, canvas, div, prelude::*, px,
+    EventEmitter, FocusHandle, Focusable, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight,
+    IntoElement, KeyBinding, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Subscription,
+    Task, Window, actions, canvas, div, prelude::*, px,
 };
-use lohtty_config::{Config, FontConfig};
+use lohtty_config::{Config, DEFAULT_FALLBACKS, FontConfig};
 use lohtty_term::{PassThrough, Session, SessionEvent, TermSize, resolve_shell};
 use lohtty_theme::Theme;
 
@@ -110,7 +112,7 @@ pub struct TerminalView {
     theme: Theme,
     font: FontConfig,
     focus: FocusHandle,
-    metrics: Option<CellMetrics>,
+    fonts: Option<FontSet>,
     painted: Rc<Cell<PaintState>>,
     scroll_accum: f32,
     /// IME composition in progress (dead key or IME), if any.
@@ -182,7 +184,7 @@ impl TerminalView {
             theme,
             font: config.font.clone(),
             focus,
-            metrics: None,
+            fonts: None,
             painted: Rc::default(),
             scroll_accum: 0.0,
             marked_text: None,
@@ -199,7 +201,7 @@ impl TerminalView {
     pub fn apply_config(&mut self, config: &Config, theme: Theme, cx: &mut Context<Self>) {
         if self.font != config.font {
             self.font = config.font.clone();
-            self.metrics = None;
+            self.fonts = None;
         }
         self.theme = theme;
         cx.notify();
@@ -254,15 +256,22 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn font(&self, bold: bool, italic: bool) -> Font {
-        Font {
+    /// The fonts and cell metrics for the current config, computed once.
+    fn font_set(&mut self, window: &mut Window) -> FontSet {
+        if let Some(set) = &self.fonts {
+            return set.clone();
+        }
+        let fallbacks = resolve_fallbacks(&self.font, window);
+        let make = |bold: bool, italic: bool| Font {
             family: self.font.family.clone().into(),
             features: if self.font.ligatures {
-                FontFeatures::default()
+                // Explicit, not `default()`: on Windows gpui applies an empty
+                // feature list as "no features", which disables ligatures.
+                FontFeatures(Arc::new(vec![("calt".into(), 1), ("liga".into(), 1)]))
             } else {
                 FontFeatures::disable_ligatures()
             },
-            fallbacks: None,
+            fallbacks: fallbacks.clone(),
             weight: if bold {
                 FontWeight::BOLD
             } else {
@@ -273,28 +282,67 @@ impl TerminalView {
             } else {
                 FontStyle::Normal
             },
-        }
-    }
+        };
+        let fonts = [
+            make(false, false),
+            make(true, false),
+            make(false, true),
+            make(true, true),
+        ];
 
-    fn metrics(&mut self, window: &mut Window) -> CellMetrics {
-        if let Some(m) = self.metrics {
-            return m;
-        }
         let font_size = px(self.font.size);
         let text_system = window.text_system();
-        let font_id = text_system.resolve_font(&self.font(false, false));
+        let font_id = text_system.resolve_font(&fonts[0]);
         let cell_width = text_system
             .advance(font_id, font_size, 'm')
             .map(|s| s.width)
             .unwrap_or(font_size * 0.6);
-        let m = CellMetrics {
-            font_size,
-            cell_width,
-            line_height: (font_size * 1.25).round(),
+        let set = FontSet {
+            fonts,
+            metrics: CellMetrics {
+                font_size,
+                cell_width,
+                line_height: (font_size * 1.25).round(),
+            },
         };
-        self.metrics = Some(m);
-        m
+        self.fonts = Some(set.clone());
+        set
     }
+
+    fn line_height(&self) -> Pixels {
+        self.fonts
+            .as_ref()
+            .map_or(px(16.0), |f| f.metrics.line_height)
+    }
+}
+
+/// Regular, bold, italic and bold-italic fonts, plus the cell size they imply.
+#[derive(Clone)]
+struct FontSet {
+    fonts: [Font; 4],
+    metrics: CellMetrics,
+}
+
+/// The configured fallback list, or the installed subset of the defaults.
+fn resolve_fallbacks(font: &FontConfig, window: &Window) -> Option<FontFallbacks> {
+    static INSTALLED_DEFAULTS: OnceLock<Vec<String>> = OnceLock::new();
+    let names = match &font.fallbacks {
+        Some(list) => list.clone(),
+        None => INSTALLED_DEFAULTS
+            .get_or_init(|| {
+                let installed: HashSet<String> =
+                    window.text_system().all_font_names().into_iter().collect();
+                let found: Vec<String> = DEFAULT_FALLBACKS
+                    .iter()
+                    .filter(|name| installed.contains(**name))
+                    .map(|name| name.to_string())
+                    .collect();
+                tracing::info!(?found, "default font fallbacks");
+                found
+            })
+            .clone(),
+    };
+    (!names.is_empty()).then(|| FontFallbacks::from_fonts(names))
 }
 
 impl Focusable for TerminalView {
@@ -305,19 +353,19 @@ impl Focusable for TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let metrics = self.metrics(window);
+        let FontSet { fonts, metrics } = self.font_set(window);
         let painter = FramePainter {
             session: self.session.clone(),
             theme: self.theme.clone(),
-            fonts: [
-                self.font(false, false),
-                self.font(true, false),
-                self.font(false, true),
-                self.font(true, true),
-            ],
+            fonts,
             metrics,
             focused: self.focus.is_focused(window),
             painted: self.painted.clone(),
+            // A pending dead key isn't shown: it isn't text yet.
+            marked_text: self
+                .marked_text
+                .clone()
+                .filter(|_| !self.pending_dead_key()),
         };
         let view = cx.entity();
         let focus = self.focus.clone();

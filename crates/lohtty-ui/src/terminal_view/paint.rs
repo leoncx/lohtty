@@ -24,6 +24,8 @@ pub(super) struct FramePainter {
     pub metrics: CellMetrics,
     pub focused: bool,
     pub painted: Rc<Cell<PaintState>>,
+    /// IME composition text to draw at the cursor.
+    pub marked_text: Option<String>,
 }
 
 /// A run of adjacent cells shaped together (so ligatures can form).
@@ -31,6 +33,8 @@ struct Segment {
     row: usize,
     col: usize,
     cells: usize,
+    /// Snap glyphs to the cell grid (off when combining marks are present).
+    snap: bool,
     text: String,
     runs: Vec<TextRun>,
 }
@@ -48,6 +52,7 @@ pub(super) struct Frame {
     cursor_below: Option<PaintQuad>,
     lines: Vec<(Point<Pixels>, ShapedLine)>,
     cursor_above: Option<PaintQuad>,
+    composition: Option<(PaintQuad, Point<Pixels>, ShapedLine)>,
     line_height: Pixels,
 }
 
@@ -158,20 +163,27 @@ impl FramePainter {
                 }
 
                 // Text: spaces end a segment unless decorated.
-                let decorated = flags.intersects(Flags::ALL_UNDERLINES | Flags::STRIKEOUT);
+                let hyperlink = cell.hyperlink().is_some();
+                let underlined = flags.intersects(Flags::ALL_UNDERLINES) || hyperlink;
+                let decorated = underlined || flags.contains(Flags::STRIKEOUT);
                 if flags.contains(Flags::HIDDEN) || (cell.c == ' ' && !decorated) {
                     segments.extend(seg.take());
                     continue;
                 }
 
+                // Wide chars and the cursor cell get their own segment: wide
+                // glyphs must not shift their neighbors, and ligatures are
+                // broken under the cursor so the edited character stays legible.
+                let alone = width == 2 || is_cursor;
                 let contiguous = matches!(&seg, Some(s) if s.row == row && s.col + s.cells == col);
-                if !contiguous || width == 2 {
+                if !contiguous || alone {
                     segments.extend(seg.take());
                 }
                 let s = seg.get_or_insert_with(|| Segment {
                     row,
                     col,
                     cells: 0,
+                    snap: true,
                     text: String::new(),
                     runs: Vec::new(),
                 });
@@ -180,24 +192,27 @@ impl FramePainter {
                 s.text.push(cell.c);
                 if let Some(zw) = cell.zerowidth() {
                     s.text.extend(zw);
+                    // Combining marks add glyphs: per-glyph snapping would misplace them.
+                    s.snap = false;
                 }
                 let len = s.text.len() - start;
                 s.cells += width;
 
                 let font_idx = flags.contains(Flags::BOLD) as usize
                     + 2 * flags.contains(Flags::ITALIC) as usize;
+                let underline_color = cell
+                    .underline_color()
+                    .map(|c| to_rgba(colors::resolve(c, overrides, theme)).into());
                 let run = TextRun {
                     len,
                     font: self.fonts[font_idx].clone(),
                     color: fg.into(),
                     background_color: None,
-                    underline: flags
-                        .intersects(Flags::ALL_UNDERLINES)
-                        .then(|| UnderlineStyle {
-                            thickness: px(1.0),
-                            color: None,
-                            wavy: flags.contains(Flags::UNDERCURL),
-                        }),
+                    underline: underlined.then(|| UnderlineStyle {
+                        thickness: px(1.0),
+                        color: underline_color,
+                        wavy: flags.contains(Flags::UNDERCURL),
+                    }),
                     strikethrough: flags
                         .contains(Flags::STRIKEOUT)
                         .then(|| StrikethroughStyle {
@@ -217,7 +232,7 @@ impl FramePainter {
                     _ => s.runs.push(run),
                 }
 
-                if width == 2 {
+                if alone {
                     segments.extend(seg.take());
                 }
             }
@@ -280,16 +295,47 @@ impl FramePainter {
             .into_iter()
             .map(|s| {
                 let origin = cell_bounds(s.row, s.col, s.cells).origin;
-                let shaped = text_system.shape_line(s.text.into(), m.font_size, &s.runs, None);
+                // Pin each glyph to its cell, so fallback glyphs (icons, symbols)
+                // with a different advance can't push the rest of the line off-grid.
+                let force_width = s.snap.then_some(m.cell_width);
+                let shaped =
+                    text_system.shape_line(s.text.into(), m.font_size, &s.runs, force_width);
                 (origin, shaped)
             })
             .collect();
+
+        // IME composition: drawn over the grid at the cursor, underlined.
+        let composition = self
+            .marked_text
+            .filter(|t| !t.is_empty())
+            .zip(cursor_bounds)
+            .map(|(text, at)| {
+                let run = TextRun {
+                    len: text.len(),
+                    font: self.fonts[0].clone(),
+                    color: to_rgba(theme.foreground).into(),
+                    background_color: None,
+                    underline: Some(UnderlineStyle {
+                        thickness: px(1.0),
+                        color: None,
+                        wavy: false,
+                    }),
+                    strikethrough: None,
+                };
+                let shaped = text_system.shape_line(text.into(), m.font_size, &[run], None);
+                let backdrop = fill(
+                    Bounds::new(at.origin, size(shaped.width, m.line_height)),
+                    to_rgba(theme.background),
+                );
+                (backdrop, at.origin, shaped)
+            });
 
         Frame {
             rects,
             cursor_below,
             lines,
             cursor_above,
+            composition,
             line_height: m.line_height,
         }
     }
@@ -308,6 +354,10 @@ impl Frame {
         }
         if let Some(c) = self.cursor_above {
             window.paint_quad(c);
+        }
+        if let Some((backdrop, origin, line)) = self.composition {
+            window.paint_quad(backdrop);
+            let _ = line.paint(origin, self.line_height, window, cx);
         }
     }
 }

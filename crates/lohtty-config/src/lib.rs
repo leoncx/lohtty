@@ -58,19 +58,38 @@ pub struct FontConfig {
     pub family: String,
     pub size: f32,
     pub ligatures: bool,
+    /// Fonts tried, in order, for characters the main font lacks (e.g. Nerd
+    /// Font icons). `None` picks installed fonts from [`DEFAULT_FALLBACKS`];
+    /// the system fallback (emoji, CJK...) always applies afterwards.
+    pub fallbacks: Option<Vec<String>>,
 }
+
+/// Fallback candidates used when `font.fallbacks` isn't set: common fonts
+/// carrying Nerd Font icons (used by prompts such as oh-my-posh or starship).
+pub const DEFAULT_FALLBACKS: &[&str] = &[
+    "Symbols Nerd Font Mono",
+    "Symbols Nerd Font",
+    "CaskaydiaCove Nerd Font Mono",
+    "CaskaydiaMono Nerd Font Mono",
+    "FiraCode Nerd Font Mono",
+    "JetBrainsMono Nerd Font Mono",
+    "MesloLGS Nerd Font Mono",
+    "Hack Nerd Font Mono",
+];
 
 impl Default for FontConfig {
     fn default() -> Self {
         Self {
+            // Cascadia Code ships with Windows Terminal and has ligatures.
             family: if cfg!(windows) {
-                "Cascadia Mono"
+                "Cascadia Code"
             } else {
                 "monospace"
             }
             .into(),
             size: 14.0,
             ligatures: true,
+            fallbacks: None,
         }
     }
 }
@@ -141,6 +160,20 @@ mod tests {
     #[test]
     fn empty_file_gives_defaults() {
         assert_eq!(Config::parse("", "x".into()).unwrap(), Config::default());
+    }
+
+    #[test]
+    fn font_fallbacks_default_to_auto() {
+        assert_eq!(Config::default().font.fallbacks, None);
+        let cfg = Config::parse(
+            "[font]\nfallbacks = [\"Symbols Nerd Font Mono\"]\n",
+            "x".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.font.fallbacks.as_deref(),
+            Some(&["Symbols Nerd Font Mono".to_string()][..])
+        );
     }
 
     #[test]

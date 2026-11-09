@@ -9,7 +9,7 @@ use alacritty_terminal::term::TermMode;
 use gpui::{
     Bounds, ClipboardItem, Context, EntityInputHandler, KeyDownEvent, Modifiers, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent,
-    UTF16Selection, Window, px,
+    UTF16Selection, Window,
 };
 use lohtty_term::input::{KeyInput, encode_key, encode_paste, is_text_key};
 use lohtty_term::mouse::{self, MouseAction, MouseReport, encode_mouse, wants_mouse};
@@ -75,7 +75,7 @@ impl TerminalView {
 
     /// A single-character composition on Windows is a dead key (e.g. `^` or `"`
     /// on international layouts), not an IME session.
-    fn pending_dead_key(&self) -> bool {
+    pub(super) fn pending_dead_key(&self) -> bool {
         cfg!(windows)
             && self
                 .marked_text
@@ -143,6 +143,22 @@ impl TerminalView {
         self.last_reported_cell = Some((col, row));
     }
 
+    /// The OSC 8 hyperlink under a viewport cell, if it's a URL we can open.
+    fn hyperlink_at(&self, col: usize, row: usize) -> Option<String> {
+        let point = self.grid_point(col, row);
+        let uri = self.session.term().lock().grid()[point]
+            .hyperlink()?
+            .uri()
+            .to_owned();
+        // Only hand well-known schemes to the OS: a link's target is chosen by
+        // whatever program printed it.
+        let allowed = ["http://", "https://", "mailto:", "file://"];
+        allowed
+            .iter()
+            .any(|scheme| uri.to_ascii_lowercase().starts_with(scheme))
+            .then_some(uri)
+    }
+
     /// Converts a viewport cell to a grid point (accounting for scrollback).
     fn grid_point(&self, col: usize, row: usize) -> GridPoint {
         let offset = self.session.term().lock().grid().display_offset() as i32;
@@ -160,6 +176,21 @@ impl TerminalView {
             return;
         };
         let (col, row, side) = grid.cell_at(ev.position);
+
+        // Ctrl+click (Cmd+click on macOS) opens an OSC 8 hyperlink.
+        let open_modifier = if cfg!(target_os = "macos") {
+            ev.modifiers.platform
+        } else {
+            ev.modifiers.control
+        };
+        if ev.button == MouseButton::Left
+            && open_modifier
+            && let Some(uri) = self.hyperlink_at(col, row)
+        {
+            cx.open_url(&uri);
+            return;
+        }
+
         let mode = self.mode();
 
         if wants_mouse(mode, ev.modifiers.shift) {
@@ -270,7 +301,7 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let line_height = self.metrics.map_or(px(16.0), |m| m.line_height);
+        let line_height = self.line_height();
         self.scroll_accum += match ev.delta {
             ScrollDelta::Lines(p) => p.y,
             ScrollDelta::Pixels(p) => p.y / line_height,

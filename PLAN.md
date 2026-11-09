@@ -212,10 +212,21 @@ Each milestone ends with a runnable build.
   - Tab reordering by drag.
   - New panes should start in the current pane's directory (needs OSC 7 or OSC 9;9 from the shell).
 
-**M4 — Rendering polish**
+**M4 — Rendering polish** — **done**
 - Ligatures (run batching), font fallback for emoji and CJK, wide-character correctness.
 - Background opacity and blur.
 - Hyperlinks (OSC 8), plus underline styles and colors (curly or dotted, SGR 58).
+
+*Implementation notes from M4:*
+- **Default font:** now Cascadia Code on Windows, which has ligatures and ships with Windows Terminal.
+- **Fallbacks:** `font.fallbacks` sets an explicit list. When it is unset, lohtty uses whichever popular Nerd Fonts are installed (`DEFAULT_FALLBACKS`, detected once per process). The system fallback still covers emoji and CJK.
+- **gpui quirk:** on Windows, `FontFeatures::default()` (an empty list) disables ligatures, because gpui then sets an empty DirectWrite typography. Ligatures are therefore requested explicitly (`calt`, `liga`).
+- **Grid snapping:** glyphs are snapped to the grid with `shape_line`'s `force_width`, so fallback glyphs of a different width can't shift a line. Segments with combining marks aren't snapped, because snapping works per glyph.
+- **Segment breaks:** wide characters and the cursor cell get their own segments. Ligatures therefore break under the cursor.
+- **Hyperlinks:** OSC 8 links are underlined. Ctrl+click (Cmd+click on macOS) opens them, but only for http, https, mailto and file URLs. That click wasn't tested live, to avoid launching a browser.
+- **Underlines:** SGR 58 underline colors are supported. gpui only draws straight or wavy lines, so double, dotted and dashed underlines render straight.
+- **IME:** the composition text is drawn at the cursor. This wasn't tested live, because no IME is installed on the dev machine.
+- **TODO:** automatic URL detection for plain-text links, and a hover style for links.
 
 **M5 — Search**
 - Search bar, regex and case toggles, highlight all matches, jump to a match with scroll.
