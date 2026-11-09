@@ -35,6 +35,8 @@ fn main() {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitlebarOptions {
                 title: Some("lohtty".into()),
+                // The tab bar doubles as the title bar (see lohtty_ui::CUSTOM_TITLEBAR).
+                appears_transparent: lohtty_ui::CUSTOM_TITLEBAR,
                 ..Default::default()
             }),
             window_background: window_background(win),

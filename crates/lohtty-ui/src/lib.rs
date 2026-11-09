@@ -14,6 +14,11 @@ use lohtty_theme::{Theme, ThemeError};
 pub use terminal_view::{Copy, Paste, TerminalView};
 pub use workspace::Workspace;
 
+/// Whether lohtty draws its own title bar (tabs next to the caption buttons)
+/// instead of the platform's. Windows only for now: macOS would need room for
+/// the traffic lights, Linux depends on the compositor.
+pub const CUSTOM_TITLEBAR: bool = cfg!(windows);
+
 /// Registers key bindings. Call once at startup.
 pub fn init(cx: &mut App) {
     cx.bind_keys(terminal_view::key_bindings());

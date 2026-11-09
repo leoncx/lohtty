@@ -211,6 +211,12 @@ Each milestone ends with a runnable build.
   - Keyboard pane resizing.
   - Tab reordering by drag.
   - New panes should start in the current pane's directory (needs OSC 7 or OSC 9;9 from the shell).
+- **Tabs in the title bar** (Windows; `lohtty_ui::CUSTOM_TITLEBAR`):
+  - The window uses `TitlebarOptions { appears_transparent: true }`. The tab bar's empty space is a `WindowControlArea::Drag`, which lets Windows handle dragging, double-click to maximize, the right-click system menu and Aero Snap.
+  - The minimize, maximize/restore and close buttons are drawn with Segoe Fluent Icons (falling back to Segoe MDL2 Assets). They are mapped to `Min`, `Max` and `Close`, so Windows handles the clicks and shows the Windows 11 snap-layout flyout on maximize.
+  - gpui checks control areas before the top resize border, so the drag area starts 4 px below the top edge to keep resizing from the top.
+  - Tested: maximize, restore, close, the red close hover, and dimmed glyphs when the window is inactive. Double-click to maximize is blocked on the dev machine by GlazeWM, for the native caption too.
+  - macOS and Linux keep the native title bar. macOS would need room for the traffic lights.
 
 **M4 — Rendering polish** — **done**
 - Ligatures (run batching), font fallback for emoji and CJK, wide-character correctness.
