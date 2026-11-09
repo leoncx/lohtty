@@ -2,6 +2,7 @@
 
 mod input;
 mod paint;
+mod search;
 
 use std::cell::Cell;
 use std::collections::HashSet;
@@ -23,7 +24,7 @@ use lohtty_theme::Theme;
 use crate::colors;
 use paint::FramePainter;
 
-actions!(terminal, [Copy, Paste]);
+actions!(terminal, [Copy, Paste, Search]);
 
 const KEY_CONTEXT: &str = "Terminal";
 
@@ -42,10 +43,13 @@ impl EventEmitter<TerminalEvent> for TerminalView {}
 /// Default key bindings for terminal views.
 pub fn key_bindings() -> Vec<KeyBinding> {
     let ctx = Some(KEY_CONTEXT);
+    // Search also works from the search bar itself (re-focuses it).
+    let search_ctx = Some("Terminal || SearchBar");
     if cfg!(target_os = "macos") {
         vec![
             KeyBinding::new("cmd-c", Copy, ctx),
             KeyBinding::new("cmd-v", Paste, ctx),
+            KeyBinding::new("cmd-f", Search, search_ctx),
         ]
     } else {
         vec![
@@ -53,6 +57,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
             KeyBinding::new("ctrl-shift-v", Paste, ctx),
             KeyBinding::new("ctrl-insert", Copy, ctx),
             KeyBinding::new("shift-insert", Paste, ctx),
+            KeyBinding::new("ctrl-shift-f", Search, search_ctx),
         ]
     }
 }
@@ -124,6 +129,8 @@ pub struct TerminalView {
     /// Button held during an application-reported press, and last reported cell.
     reported_button: Option<lohtty_term::mouse::MouseButton>,
     last_reported_cell: Option<(usize, usize)>,
+    /// The open search bar and its state.
+    search: Option<search::SearchState>,
     _events: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -192,6 +199,7 @@ impl TerminalView {
             selecting: false,
             reported_button: None,
             last_reported_cell: None,
+            search: None,
             _events: task,
             _subscriptions: subscriptions,
         }
@@ -202,6 +210,10 @@ impl TerminalView {
         if self.font != config.font {
             self.font = config.font.clone();
             self.fonts = None;
+        }
+        if let Some(search) = &self.search {
+            let theme = theme.clone();
+            search.bar.update(cx, |bar, cx| bar.set_theme(theme, cx));
         }
         self.theme = theme;
         cx.notify();
@@ -366,11 +378,17 @@ impl Render for TerminalView {
                 .marked_text
                 .clone()
                 .filter(|_| !self.pending_dead_key()),
+            search: self
+                .search
+                .as_ref()
+                .and_then(|s| Some((s.regex.clone()?, s.current.clone()))),
         };
         let view = cx.entity();
         let focus = self.focus.clone();
 
-        div()
+        // The search bar sits outside the "Terminal" key context, so terminal
+        // bindings (paste...) and key handling don't apply while typing in it.
+        let terminal = div()
             .id("terminal")
             .track_focus(&self.focus)
             .key_context(KEY_CONTEXT)
@@ -407,6 +425,19 @@ impl Render for TerminalView {
                     },
                 )
                 .size_full(),
-            )
+            );
+
+        div()
+            .relative()
+            .size_full()
+            .on_action(cx.listener(Self::open_search))
+            .child(terminal)
+            .children(self.search.as_ref().map(|s| {
+                div()
+                    .absolute()
+                    .top(px(4.0))
+                    .right(px(8.0))
+                    .child(s.bar.clone())
+            }))
     }
 }

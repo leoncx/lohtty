@@ -4,6 +4,7 @@
 mod filter;
 pub mod input;
 pub mod mouse;
+pub mod search;
 mod session;
 mod shell;
 

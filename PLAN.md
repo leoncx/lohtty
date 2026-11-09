@@ -228,9 +228,27 @@ Each milestone ends with a runnable build.
 - **IME:** the composition text is drawn at the cursor. This wasn't tested live, because no IME is installed on the dev machine.
 - **TODO:** automatic URL detection for plain-text links, and a hover style for links.
 
-**M5 — Search**
+**M5 — Search** — **done**
 - Search bar, regex and case toggles, highlight all matches, jump to a match with scroll.
 
+*Implementation notes from M5:*
+- **Search core:** `lohtty-term::search` wraps alacritty's `RegexSearch`. Queries are literal by default (metacharacters escaped) or regex. The case toggle overrides alacritty's smart case with `(?i)` / `(?-i)`. Unit tests run on `mock_term` grids.
+- **Opening:** Ctrl+Shift+F (Cmd+F on macOS) opens a per-pane search bar. A one-line selection pre-fills the query. Searching starts from the bottom, i.e. the newest output.
+- **Keys in the bar:**
+
+  | Key | Action |
+  |---|---|
+  | Enter / Up | Older match |
+  | Shift+Enter / Down | Newer match |
+  | Esc | Close and return focus to the terminal |
+  | Backspace / Ctrl+Backspace | Delete a character / clear |
+  | Ctrl+V | Paste the first line of the clipboard |
+
+  The bar also has toggles for case (`Aa`) and regex (`.*`), a counter (`n/total`, capped at 10 000), and ↑ ↓ × buttons.
+- **Highlighting:** the current match uses the theme's yellow. Other visible matches use a dimmer yellow, so they stay readable on any background.
+- **Bar layout:** the bar sits outside the `Terminal` key context, so terminal bindings and PTY input don't fire while typing in it. It occludes the mouse, so clicks on it don't reach the grid.
+- **Text input:** the bar has its own input handler, so typing in it goes through the same WM_CHAR path as the terminal.
+- **Known limitation:** the counter and current match aren't refreshed while new output streams in. They update on the next keystroke or navigation.
 **M6 — Compatibility & hardening**
 - Pass the vttest core suites and the relevant esctest cases.
 - Performance: `cat` of a large file, plus a latency check (target under 1 frame from input to paint).

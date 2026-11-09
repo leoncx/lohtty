@@ -3,12 +3,15 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Column, Line, Point as GridPoint};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::CursorShape;
 use gpui::{
     App, BorderStyle, Bounds, Font, PaintQuad, Pixels, Point, Rgba, ShapedLine, StrikethroughStyle,
     TextRun, UnderlineStyle, Window, fill, outline, point, px, size,
 };
+use lohtty_term::search::{self, Match, RegexSearch};
 use lohtty_term::{Session, TermSize};
 use lohtty_theme::Theme;
 
@@ -26,6 +29,8 @@ pub(super) struct FramePainter {
     pub painted: Rc<Cell<PaintState>>,
     /// IME composition text to draw at the cursor.
     pub marked_text: Option<String>,
+    /// Active search: the compiled query and the current match.
+    pub search: Option<(RegexSearch, Option<Match>)>,
 }
 
 /// A run of adjacent cells shaped together (so ligatures can form).
@@ -82,6 +87,9 @@ impl FramePainter {
         let theme = &self.theme;
         let default_bg = to_rgba(theme.background);
         let selection_bg = to_rgba(theme.selection);
+        // Search highlights derive from the theme's yellow.
+        let current_match_bg = to_rgba(theme.ansi[3]);
+        let match_bg = to_rgba(colors::mix(theme.background, theme.ansi[3], 0.35));
         let mut rects = Vec::new();
         let mut segments = Vec::new();
         let mut cursor_below = None;
@@ -90,6 +98,19 @@ impl FramePainter {
 
         {
             let term = self.session.term().lock();
+
+            // Search matches intersecting the viewport.
+            let (visible_matches, current_match) = match self.search {
+                Some((mut regex, current)) => {
+                    let top = -(term.grid().display_offset() as i32);
+                    let first = GridPoint::new(Line(top), Column(0));
+                    let last = GridPoint::new(Line(top + rows as i32 - 1), term.last_column());
+                    let found = search::matches_in_lines(&term, &mut regex, first, last);
+                    (found, current)
+                }
+                None => (Vec::new(), None),
+            };
+
             let content = term.renderable_content();
             let overrides = content.colors;
             let selection = content.selection;
@@ -135,9 +156,20 @@ impl FramePainter {
                         fg = theme.background;
                     }
                 }
+                // Highlight priority: current search match, selection, other matches.
+                let in_current = current_match
+                    .as_ref()
+                    .is_some_and(|m| m.contains(&item.point));
+                if in_current {
+                    fg = theme.background;
+                }
                 let fg = to_rgba(fg);
-                let bg_c = if selection.is_some_and(|s| s.contains(item.point)) {
+                let bg_c = if in_current {
+                    current_match_bg
+                } else if selection.is_some_and(|s| s.contains(item.point)) {
                     selection_bg
+                } else if visible_matches.iter().any(|m| m.contains(&item.point)) {
+                    match_bg
                 } else {
                     to_rgba(bg_c)
                 };
