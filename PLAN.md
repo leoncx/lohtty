@@ -184,10 +184,33 @@ Each milestone ends with a runnable build.
 - Selection supports drag, double-click for a word and triple-click for a line. Shift forces local selection while an app has mouse reporting enabled. Focus in/out reporting (mode 1004) is supported.
 - Open TODO: auto-scroll while drag-selecting past the top or bottom edge.
 
-**M3 — Tabs & splits**
+**M3 — Tabs & splits** — **done** (the window-close setting is not configurable yet)
 - Workspace, TabBar, and PaneGroup split tree with focus management and divider dragging.
 - Per-pane title, with the tab showing the active pane's title.
 - Closing the last pane closes the tab, and closing the last tab closes the window (configurable).
+
+*Implementation notes from M3:*
+- `pane_tree.rs` is a pure, generic split tree with unit tests. Splitting in the same direction adds a sibling instead of nesting. Removing a pane redistributes its space proportionally, and a split left with one child collapses. Focus by direction uses the actual layout geometry.
+- `TerminalView` no longer touches the window. It emits `TerminalEvent::{TitleChanged, Focused, Exited}`, and the workspace owns the window title, the active pane and the closing of panes.
+- Bindings on Windows/Linux:
+
+  | Action | Keys |
+  |---|---|
+  | New tab | Ctrl+Shift+T |
+  | Close pane | Ctrl+Shift+W (closes the tab when it is the last pane) |
+  | Split right | Alt+Shift+= |
+  | Split down | Alt+Shift+- |
+  | Focus pane | Alt+Arrow, or Ctrl+Alt+Arrow |
+  | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+  | Go to tab N | Ctrl+Alt+1–9 (9 is the last tab) |
+
+  macOS uses Cmd variants. In the tab bar, middle-click or × closes a tab and + opens one.
+- gpui on Windows folds Shift into the character: Alt+Shift+= arrives as `alt-+`, so both forms are bound.
+- Ctrl+Alt+Arrow exists because window managers such as GlazeWM capture Alt+Arrow globally. User-configurable keybindings should come in a later milestone.
+- Open TODOs:
+  - Keyboard pane resizing.
+  - Tab reordering by drag.
+  - New panes should start in the current pane's directory (needs OSC 7 or OSC 9;9 from the shell).
 
 **M4 — Rendering polish**
 - Ligatures (run batching), font fallback for emoji and CJK, wide-character correctness.

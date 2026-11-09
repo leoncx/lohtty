@@ -1,6 +1,7 @@
 //! gpui views: Workspace, TabBar, PaneGroup, TerminalView, SearchBar.
 
 mod colors;
+mod pane_tree;
 mod terminal_view;
 mod workspace;
 
@@ -14,6 +15,7 @@ pub use workspace::Workspace;
 /// Registers key bindings. Call once at startup.
 pub fn init(cx: &mut App) {
     cx.bind_keys(terminal_view::key_bindings());
+    cx.bind_keys(workspace::key_bindings());
 }
 
 /// Loads the theme named in the config (user themes dir first, then bundled).

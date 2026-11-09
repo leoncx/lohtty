@@ -129,6 +129,7 @@ pub struct Session {
     killer: Box<dyn ChildKiller + Send + Sync>,
     size: Arc<Mutex<TermSize>>,
     dirty: Arc<AtomicBool>,
+    program: String,
 }
 
 impl Session {
@@ -243,9 +244,15 @@ impl Session {
                 killer,
                 size: size_cell,
                 dirty,
+                program: shell.program.clone(),
             },
             events_rx,
         ))
+    }
+
+    /// The program running in this session, as given to [`Session::spawn`].
+    pub fn program(&self) -> &str {
+        &self.program
     }
 
     pub fn term(&self) -> &Arc<FairMutex<Term<EventProxy>>> {

@@ -35,6 +35,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         let ks = &ev.keystroke;
+        tracing::trace!(key = %ks.key, key_char = ?ks.key_char, mods = ?ks.modifiers, "key down");
         if ks.modifiers.platform {
             return;
         }

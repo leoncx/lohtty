@@ -17,6 +17,16 @@ fn from_term(c: TermRgb) -> Rgb {
     }
 }
 
+/// Linear blend from `a` (t = 0) to `b` (t = 1).
+pub fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
+    let m = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
+    Rgb {
+        r: m(a.r, b.r),
+        g: m(a.g, b.g),
+        b: m(a.b, b.b),
+    }
+}
+
 /// Mixes `fg` toward `bg` (used for dim text).
 pub fn dim(fg: Rgb, bg: Rgb) -> Rgb {
     let mix = |a: u8, b: u8| ((a as u16 * 2 + b as u16) / 3) as u8;

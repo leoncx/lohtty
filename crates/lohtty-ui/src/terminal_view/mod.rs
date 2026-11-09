@@ -10,9 +10,9 @@ use alacritty_terminal::index::Side;
 use alacritty_terminal::term::TermMode;
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, DispatchPhase, ElementInputHandler,
-    FocusHandle, Focusable, Font, FontFeatures, FontStyle, FontWeight, IntoElement, KeyBinding,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Subscription, Task, Window, actions,
-    canvas, div, prelude::*, px,
+    EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle, FontWeight, IntoElement,
+    KeyBinding, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Subscription, Task, Window,
+    actions, canvas, div, prelude::*, px,
 };
 use lohtty_config::{Config, FontConfig};
 use lohtty_term::{PassThrough, Session, SessionEvent, TermSize, resolve_shell};
@@ -23,8 +23,19 @@ use paint::FramePainter;
 
 actions!(terminal, [Copy, Paste]);
 
-const DEFAULT_TITLE: &str = "lohtty";
 const KEY_CONTEXT: &str = "Terminal";
+
+/// Events a terminal view reports to its container (tab / workspace).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalEvent {
+    TitleChanged,
+    /// The view gained keyboard focus (it becomes its tab's active pane).
+    Focused,
+    /// The shell exited; the pane should close.
+    Exited,
+}
+
+impl EventEmitter<TerminalEvent> for TerminalView {}
 
 /// Default key bindings for terminal views.
 pub fn key_bindings() -> Vec<KeyBinding> {
@@ -93,6 +104,9 @@ struct PaintState {
 
 pub struct TerminalView {
     session: Rc<Session>,
+    /// Set by the application (OSC 0/2), or the shell's name.
+    title: String,
+    default_title: String,
     theme: Theme,
     font: FontConfig,
     focus: FocusHandle,
@@ -153,8 +167,18 @@ impl TerminalView {
             cx.on_blur(&focus, window, |this, _, cx| this.focus_changed(false, cx)),
         ];
 
+        // "C:\...\pwsh.exe" -> "pwsh"
+        let default_title = std::path::Path::new(session.program())
+            .file_stem()
+            .map_or_else(
+                || session.program().to_owned(),
+                |s| s.to_string_lossy().into_owned(),
+            );
+
         Self {
             session: Rc::new(session),
+            title: default_title.clone(),
+            default_title,
             theme,
             font: config.font.clone(),
             focus,
@@ -181,11 +205,22 @@ impl TerminalView {
         cx.notify();
     }
 
-    fn handle_event(&mut self, event: SessionEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn set_title(&mut self, title: String, cx: &mut Context<Self>) {
+        if self.title != title {
+            self.title = title;
+            cx.emit(TerminalEvent::TitleChanged);
+        }
+    }
+
+    fn handle_event(&mut self, event: SessionEvent, _window: &mut Window, cx: &mut Context<Self>) {
         match event {
             SessionEvent::Wakeup => cx.notify(),
-            SessionEvent::Title(title) => window.set_window_title(&title),
-            SessionEvent::ResetTitle => window.set_window_title(DEFAULT_TITLE),
+            SessionEvent::Title(title) => self.set_title(title, cx),
+            SessionEvent::ResetTitle => self.set_title(self.default_title.clone(), cx),
             SessionEvent::Bell => {}
             SessionEvent::ClipboardStore(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text))
@@ -197,7 +232,7 @@ impl TerminalView {
                 };
                 self.session.write(format(colors::to_term(rgb)));
             }
-            SessionEvent::Exit => window.remove_window(),
+            SessionEvent::Exit => cx.emit(TerminalEvent::Exited),
         }
     }
 
@@ -211,6 +246,9 @@ impl TerminalView {
         {
             self.session
                 .write(if focused { &b"\x1b[I"[..] } else { b"\x1b[O" });
+        }
+        if focused {
+            cx.emit(TerminalEvent::Focused);
         }
         // Repaint: the cursor is hollow while unfocused.
         cx.notify();
