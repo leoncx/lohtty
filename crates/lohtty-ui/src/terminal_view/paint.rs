@@ -2,6 +2,7 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
+use std::time::Instant;
 
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as GridPoint};
@@ -17,6 +18,7 @@ use lohtty_theme::Theme;
 
 use super::{CellMetrics, GridGeometry, PaintState};
 use crate::colors::{self, to_rgba};
+use crate::perf;
 
 /// Everything needed to lay out one frame, captured by the canvas.
 pub(super) struct FramePainter {
@@ -63,6 +65,7 @@ pub(super) struct Frame {
 
 impl FramePainter {
     pub fn prepaint(self, bounds: Bounds<Pixels>, window: &mut Window) -> Frame {
+        let started = Instant::now();
         let m = self.metrics;
         let cols = ((bounds.size.width / m.cell_width) as usize).clamp(2, u16::MAX as usize);
         let rows = ((bounds.size.height / m.line_height) as usize).clamp(1, u16::MAX as usize);
@@ -122,6 +125,8 @@ impl FramePainter {
             let mut cursor_wide = false;
 
             let mut seg: Option<Segment> = None;
+            // Blank cells seen after the current segment, not yet added to it.
+            let mut pending_spaces = 0usize;
             let mut bg: Option<BgRect> = None;
 
             for item in content.display_iter {
@@ -194,12 +199,22 @@ impl FramePainter {
                     }
                 }
 
-                // Text: spaces end a segment unless decorated.
+                // Text. Plain spaces are not drawn on their own: they're held
+                // back and only added to the current segment if more text
+                // follows on the same row, so a row shapes as one segment
+                // (glyphs are snapped to cells) without trailing blanks.
                 let hyperlink = cell.hyperlink().is_some();
                 let underlined = flags.intersects(Flags::ALL_UNDERLINES) || hyperlink;
                 let decorated = underlined || flags.contains(Flags::STRIKEOUT);
-                if flags.contains(Flags::HIDDEN) || (cell.c == ' ' && !decorated) {
+                if flags.contains(Flags::HIDDEN) {
                     segments.extend(seg.take());
+                    pending_spaces = 0;
+                    continue;
+                }
+                if cell.c == ' ' && !decorated && !is_cursor {
+                    if seg.as_ref().is_some_and(|s| s.row == row) {
+                        pending_spaces += 1;
+                    }
                     continue;
                 }
 
@@ -207,10 +222,32 @@ impl FramePainter {
                 // glyphs must not shift their neighbors, and ligatures are
                 // broken under the cursor so the edited character stays legible.
                 let alone = width == 2 || is_cursor;
-                let contiguous = matches!(&seg, Some(s) if s.row == row && s.col + s.cells == col);
+                let contiguous = matches!(&seg, Some(s)
+                    if s.row == row && s.col + s.cells + pending_spaces == col);
                 if !contiguous || alone {
                     segments.extend(seg.take());
+                } else if let Some(s) = seg.as_mut()
+                    && pending_spaces > 0
+                {
+                    // Spaces only need advance: extend the previous run unless
+                    // it's decorated (spaces must not be underlined/struck).
+                    s.text.extend(std::iter::repeat_n(' ', pending_spaces));
+                    if let Some(last) = s.runs.last_mut() {
+                        if last.underline.is_none() && last.strikethrough.is_none() {
+                            last.len += pending_spaces;
+                        } else {
+                            let plain = TextRun {
+                                len: pending_spaces,
+                                underline: None,
+                                strikethrough: None,
+                                ..last.clone()
+                            };
+                            s.runs.push(plain);
+                        }
+                    }
+                    s.cells += pending_spaces;
                 }
+                pending_spaces = 0;
                 let s = seg.get_or_insert_with(|| Segment {
                     row,
                     col,
@@ -322,6 +359,9 @@ impl FramePainter {
             cursor: cursor_bounds,
         });
 
+        let grid_time = started.elapsed();
+        let shape_start = Instant::now();
+        let segment_count = segments.len();
         let text_system = window.text_system().clone();
         let lines = segments
             .into_iter()
@@ -335,6 +375,11 @@ impl FramePainter {
                 (origin, shaped)
             })
             .collect();
+        perf::record_prepaint(perf::FrameTimings {
+            grid: grid_time,
+            shape: shape_start.elapsed(),
+            segments: segment_count,
+        });
 
         // IME composition: drawn over the grid at the cursor, underlined.
         let composition = self
@@ -375,6 +420,12 @@ impl FramePainter {
 
 impl Frame {
     pub fn paint(self, window: &mut Window, cx: &mut App) {
+        let started = Instant::now();
+        self.paint_inner(window, cx);
+        perf::record_paint(started.elapsed());
+    }
+
+    fn paint_inner(self, window: &mut Window, cx: &mut App) {
         for quad in self.rects {
             window.paint_quad(quad);
         }

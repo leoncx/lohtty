@@ -8,6 +8,7 @@ use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::index::Side;
 use alacritty_terminal::term::TermMode;
@@ -27,6 +28,11 @@ use paint::FramePainter;
 actions!(terminal, [Copy, Paste, Search]);
 
 const KEY_CONTEXT: &str = "Terminal";
+
+/// Minimum interval between output-driven repaints while output streams.
+/// The repaint itself lands on the next vsync, so 12 ms gives roughly 50-60
+/// fps on 60-165 Hz displays: a screen changing faster can't be read anyway.
+const MIN_OUTPUT_FRAME: Duration = Duration::from_millis(12);
 
 /// Events a terminal view reports to its container (tab / workspace).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +137,10 @@ pub struct TerminalView {
     last_reported_cell: Option<(usize, usize)>,
     /// The open search bar and its state.
     search: Option<search::SearchState>,
+    /// When the last output-driven repaint was requested, and whether one is
+    /// already scheduled (see [`TerminalView::output_frame`]).
+    last_output_frame: Option<Instant>,
+    output_frame_pending: bool,
     _events: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -200,6 +210,8 @@ impl TerminalView {
             reported_button: None,
             last_reported_cell: None,
             search: None,
+            last_output_frame: None,
+            output_frame_pending: false,
             _events: task,
             _subscriptions: subscriptions,
         }
@@ -219,6 +231,36 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Repaints for new output, at most once per [`MIN_OUTPUT_FRAME`] while
+    /// output streams continuously. Isolated output (e.g. a keystroke's echo)
+    /// paints immediately, so typing latency is unaffected.
+    fn output_frame(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        let since_last = self.last_output_frame.map(|t| now - t);
+        match since_last {
+            Some(elapsed) if elapsed < MIN_OUTPUT_FRAME => {
+                if self.output_frame_pending {
+                    return;
+                }
+                self.output_frame_pending = true;
+                let wait = MIN_OUTPUT_FRAME - elapsed;
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(wait).await;
+                    let _ = this.update(cx, |this, cx| {
+                        this.output_frame_pending = false;
+                        this.last_output_frame = Some(Instant::now());
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+            _ => {
+                self.last_output_frame = Some(now);
+                cx.notify();
+            }
+        }
+    }
+
     pub fn title(&self) -> &str {
         &self.title
     }
@@ -232,7 +274,7 @@ impl TerminalView {
 
     fn handle_event(&mut self, event: SessionEvent, _window: &mut Window, cx: &mut Context<Self>) {
         match event {
-            SessionEvent::Wakeup => cx.notify(),
+            SessionEvent::Wakeup => self.output_frame(cx),
             SessionEvent::Title(title) => self.set_title(title, cx),
             SessionEvent::ResetTitle => self.set_title(self.default_title.clone(), cx),
             SessionEvent::Bell => {}

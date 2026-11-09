@@ -2,6 +2,7 @@
 
 mod colors;
 mod pane_tree;
+mod perf;
 mod search_bar;
 mod terminal_view;
 mod workspace;

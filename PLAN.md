@@ -265,11 +265,22 @@ Each milestone ends with a runnable build.
   - `scripts/package.ps1` builds `dist/lohtty-<version>-windows-x64.zip` (3.6 MB).
   - `release.yml` publishes the zip when a `v*` tag is pushed.
 - **Docs:** `README.md` covers features, config, themes, shortcuts and troubleshooting.
+- **Render profiling:** frame-phase counters are logged with `LOHTTY_LOG=lohtty_ui::perf=debug`. Sampling profilers (samply, WPR) need admin rights on Windows. Measured on a 14 MB `cat` with the release build on a 165 Hz display:
+
+  | | fps | Segments/frame | Shape ms | Paint ms | lohtty frame work | Total lohtty CPU |
+  |---|---|---|---|---|---|---|
+  | Before | 165 | 834 | 1.74 | 0.64 | 45% of a core | 5.2 s |
+  | Whole-row segments | 165 | 70 | 1.83 | 0.28 | 39% | — |
+  | + output frame cap | 65 | 70 | 1.84 | 0.29 | 16% | **3.1 s** |
+
+  - **Whole-row segments:** blank cells no longer split segments. Held-back spaces join the next text on the same row, as a separate undecorated run so that underlines don't extend under them. Grid snapping keeps glyphs aligned.
+  - **Output frame cap:** `MIN_OUTPUT_FRAME` (12 ms) applies only while output streams. Isolated output, like a keystroke's echo, still paints immediately.
+  - **Remaining cost:** shaping about 70 new rows per frame (DirectWrite). The layout cache can't help, because every row is new text during a flood.
+  - Wall time is unchanged at about 7 s, because ConPTY is the bottleneck.
 - **License:** Apache-2.0, chosen by the owner. The text is in `LICENSE`, it is set in `Cargo.toml`, and it ships in the zip.
 
 *Open items (blocking a v1.0 tag):*
 - **vttest/esctest:** these need a Unix environment. The dev machine's WSL only has Rancher Desktop's internal distros. Install a regular distro (for example `wsl --install Ubuntu`) and then run `vttest` inside lohtty.
-- **Render cost while streaming:** profile it (for example with `samply`) before optimizing. Candidates are caching per-row segments and skipping unchanged rows.
 - **Input latency:** not measured yet. It needs a high-speed camera or a tool such as Typometer.
 - **Later:** an MSI installer, a macOS `.app` and a Linux AppImage.
 
