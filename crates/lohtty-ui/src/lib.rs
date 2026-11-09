@@ -4,7 +4,9 @@ mod colors;
 mod pane_tree;
 mod perf;
 mod search_bar;
+mod settings;
 mod terminal_view;
+mod text_field;
 mod tooltip;
 mod workspace;
 

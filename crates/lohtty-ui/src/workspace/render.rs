@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use gpui::{
     AnyElement, Context, CursorStyle, ElementId, IntoElement, MouseButton, MouseMoveEvent, Render,
     Rgba, SharedString, Window, WindowControlArea, canvas, div, prelude::*, px, relative, rgb,
+    rgba,
 };
 
 use super::*;
@@ -166,9 +167,46 @@ impl Workspace {
                     }),
             )
             .child(self.render_split_buttons(cx))
+            .child(self.render_settings_button(window, cx))
             .when(CUSTOM_TITLEBAR, |el| {
                 el.child(self.render_caption_buttons(window))
             })
+    }
+
+    /// Gear button opening the settings dialog.
+    fn render_settings_button(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = &self.theme;
+        let hover = to_rgba(mix(t.background, t.foreground, 0.12));
+        let color = to_rgba(mix(t.foreground, t.background, 0.25));
+        let keys = if cfg!(target_os = "macos") {
+            "Cmd+,"
+        } else {
+            "Ctrl+,"
+        };
+        // The Windows icon fonts have a proper gear (E713); elsewhere use the
+        // Unicode one.
+        let (glyph, font, size) = if cfg!(windows) {
+            ("\u{E713}", Some(caption_icon_font(window)), px(13.0))
+        } else {
+            ("⚙", None, px(15.0))
+        };
+        div()
+            .id("settings-button")
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .w(px(36.0))
+            .h_full()
+            .text_color(color)
+            .text_size(size)
+            .when_some(font, |el, font| el.font_family(font))
+            .hover(|s| s.bg(hover))
+            .tooltip(Tooltip::text(format!("Settings ({keys})"), t))
+            .child(glyph)
+            .on_click(
+                cx.listener(|this, _, window, cx| this.open_settings(&OpenSettings, window, cx)),
+            )
     }
 
     /// "Split right" and "split down" buttons, acting on the active pane.
@@ -382,6 +420,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::split_right))
             .on_action(cx.listener(Self::split_down))
             .on_action(cx.listener(Self::close_pane))
+            .on_action(cx.listener(Self::open_settings))
             .on_action(cx.listener(|this, _: &FocusLeft, w, cx| {
                 this.focus_direction(Direction::Left, w, cx)
             }))
@@ -424,10 +463,27 @@ impl Render for Workspace {
             .child(self.render_tab_bar(window, cx))
             .child(
                 div()
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .bg(self.translucent(to_rgba(theme.background)))
-                    .child(body),
+                    .child(body)
+                    // The settings dialog covers the panes but not the title
+                    // bar, so the window can still be moved or closed.
+                    .children(self.settings.as_ref().map(|(dialog, _)| {
+                        div()
+                            .absolute()
+                            .top(px(0.0))
+                            .left(px(0.0))
+                            .right(px(0.0))
+                            .bottom(px(0.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(rgba(0x0000_0070))
+                            .occlude()
+                            .child(dialog.clone())
+                    })),
             )
     }
 }

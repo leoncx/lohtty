@@ -15,6 +15,7 @@ use lohtty_config::{Config, ConfigWatcher};
 use lohtty_theme::Theme;
 
 use crate::pane_tree::{Axis, Direction, PaneTree, Removed, SplitId};
+use crate::settings::{SettingsDialog, SettingsEvent};
 use crate::terminal_view::{TerminalEvent, spawn_session};
 use crate::{TerminalView, load_theme, window_background};
 
@@ -41,6 +42,7 @@ actions!(
         ActivateTab7,
         ActivateTab8,
         ActivateTab9,
+        OpenSettings,
     ]
 );
 
@@ -86,6 +88,15 @@ pub fn key_bindings() -> Vec<KeyBinding> {
     bindings.extend([
         KeyBinding::new("ctrl-tab", NextTab, ctx),
         KeyBinding::new("ctrl-shift-tab", PrevTab, ctx),
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-,"
+            } else {
+                "ctrl-,"
+            },
+            OpenSettings,
+            ctx,
+        ),
     ]);
     let modifier = if cfg!(target_os = "macos") {
         "cmd"
@@ -130,6 +141,8 @@ pub struct Workspace {
     /// Where each split was last laid out, for divider dragging.
     split_bounds: Rc<RefCell<HashMap<SplitId, Bounds<Pixels>>>>,
     dragging: Option<DividerDrag>,
+    /// The open settings dialog, if any.
+    settings: Option<(Entity<SettingsDialog>, Subscription)>,
     pane_subscriptions: HashMap<EntityId, Subscription>,
     _watcher: Option<ConfigWatcher>,
     _reload: Task<()>,
@@ -167,6 +180,7 @@ impl Workspace {
             error: None,
             split_bounds: Rc::default(),
             dragging: None,
+            settings: None,
             pane_subscriptions: HashMap::new(),
             _watcher: watcher,
             _reload: reload,
@@ -388,6 +402,37 @@ impl Workspace {
         };
         tab.panes.resize(drag.split, drag.index, fraction);
         cx.notify();
+    }
+
+    // --- Settings dialog -----------------------------------------------------
+
+    fn open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((dialog, _)) = &self.settings {
+            window.focus(&dialog.focus_handle(cx));
+            return;
+        }
+        let (config, theme) = (self.config.clone(), self.theme.clone());
+        let dialog = cx.new(|cx| SettingsDialog::new(config, theme, window, cx));
+        let subscription = cx.subscribe_in(&dialog, window, Self::on_settings_event);
+        window.focus(&dialog.focus_handle(cx));
+        self.settings = Some((dialog, subscription));
+        cx.notify();
+    }
+
+    fn on_settings_event(
+        &mut self,
+        _dialog: &Entity<SettingsDialog>,
+        event: &SettingsEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings = None;
+        if matches!(event, SettingsEvent::Saved) {
+            // The watcher would pick the change up too; reloading now makes it
+            // immediate and works even if watching is unavailable.
+            self.reload(window, cx);
+        }
+        self.focus_active_pane(window, cx);
     }
 
     fn end_drag(&mut self) {

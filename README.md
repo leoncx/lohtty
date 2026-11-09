@@ -34,6 +34,11 @@ as soon as the file is saved, except `shell`, which only affects new tabs and
 panes. If a config is invalid, lohtty keeps the previous settings and shows a
 red error bar.
 
+The **Settings** dialog edits the common options. Open it with the gear button
+in the title bar or with Ctrl+, (Cmd+, on macOS). Saving updates
+`config.toml` in place, so your comments and any other settings in the file
+are kept.
+
 ```toml
 theme = "tokyo-night"      # tokyo-night, tokyo-night-storm, tokyo-night-moon, tokyo-night-day
 scrollback = 10000
@@ -92,6 +97,7 @@ for copy, paste, search and tabs.
 | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Move focus between panes | Alt+Arrow, or Ctrl+Alt+Arrow |
 | Close pane | Ctrl+Shift+W |
+| Settings | Ctrl+, |
 
 Mouse:
 - Drag to select. Double-click selects a word, triple-click a line.

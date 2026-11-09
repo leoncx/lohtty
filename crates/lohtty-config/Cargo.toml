@@ -11,6 +11,7 @@ dirs.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 notify = "8.2"
+toml_edit = "0.25"
 
 [lints]
 workspace = true

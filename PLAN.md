@@ -218,6 +218,13 @@ Each milestone ends with a runnable build.
   - Tested: maximize, restore, close, the red close hover, and dimmed glyphs when the window is inactive. Double-click to maximize is blocked on the dev machine by GlazeWM, for the native caption too.
   - macOS and Linux keep the native title bar. macOS would need room for the traffic lights.
 - **Split buttons:** "split right" and "split down" sit in the tab bar, left of the window buttons (on every platform). They act on the active pane and show their shortcut in a tooltip. The icons are drawn with divs in the theme colors.
+- **Settings dialog:** opened with the gear button or Ctrl+, (Cmd+, on macOS).
+  - **What it edits:** a draft of the theme (bundled plus user themes), opacity, blur, padding, font family, size, ligatures, shell program and arguments (double quotes group an argument), and scrollback.
+  - **Save:** the draft is written with `Config::save`, which uses `toml_edit` to update `config.toml` in place. Comments (inline ones too), key order and unmanaged keys such as `font.fallbacks` or the window size are preserved. The workspace then reloads it.
+  - **Other buttons:** "Open config.toml" opens the file in the system editor, creating it if needed. Esc, Cancel and × close without saving. Enter in a field saves.
+  - **Layout:** the dialog covers the panes, not the title bar, so the window stays movable and closable.
+  - **`TextField`:** a reusable single-line input with the same text-input path as the terminal. Like the terminal, it lets Windows resolve a pending dead key (e.g. `"` on US-International) before acting on Enter or Esc.
+  - **Not handled:** the search bar's Enter after a dead key has the same issue and isn't fixed yet. Workspace shortcuts (new tab...) stay active while the dialog is open.
 
 **M4 — Rendering polish** — **done**
 - Ligatures (run batching), font fallback for emoji and CJK, wide-character correctness.

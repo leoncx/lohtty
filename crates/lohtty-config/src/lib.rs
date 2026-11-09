@@ -1,5 +1,6 @@
 //! User configuration (`config.toml`) and live reload.
 
+mod save;
 mod watch;
 
 use std::path::PathBuf;

@@ -121,6 +121,27 @@ pub fn bundled_names() -> impl Iterator<Item = &'static str> {
     BUNDLED.iter().map(|(name, _)| *name)
 }
 
+/// Every theme name that [`Theme::load`] accepts: bundled themes first, then
+/// user themes (`<user_dir>/<name>.toml`) sorted by name, without duplicates.
+pub fn available_names(user_dir: Option<&Path>) -> Vec<String> {
+    let mut names: Vec<String> = bundled_names().map(str::to_owned).collect();
+    let mut user: Vec<String> = user_dir
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            (path.extension()? == "toml")
+                .then(|| path.file_stem()?.to_str().map(str::to_owned))
+                .flatten()
+        })
+        .filter(|name| !names.contains(name))
+        .collect();
+    user.sort();
+    names.append(&mut user);
+    names
+}
+
 impl Theme {
     pub fn parse(name: &str, src: &str) -> Result<Self, ThemeError> {
         toml::from_str(src).map_err(|source| ThemeError::Parse {
@@ -188,6 +209,23 @@ mod tests {
         let t = Theme::load("tokyo-night", Some(&dir)).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(t.name, "Custom");
+    }
+
+    #[test]
+    fn available_names_lists_bundled_then_user_themes() {
+        let dir = std::env::temp_dir().join(format!("lohtty-theme-list-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("zebra.toml"), "").unwrap();
+        std::fs::write(dir.join("alpha.toml"), "").unwrap();
+        std::fs::write(dir.join("tokyo-night.toml"), "").unwrap(); // overrides a bundled one
+        std::fs::write(dir.join("notes.txt"), "").unwrap();
+        let names = available_names(Some(&dir));
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        let bundled: Vec<String> = bundled_names().map(str::to_owned).collect();
+        assert_eq!(&names[..bundled.len()], &bundled[..]);
+        assert_eq!(&names[bundled.len()..], ["alpha", "zebra"]);
+        assert_eq!(available_names(None), bundled);
     }
 
     #[test]
