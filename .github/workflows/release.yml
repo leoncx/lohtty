@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Package
+        id: package
+        shell: pwsh
+        run: |
+          $zip = ./scripts/package.ps1 | Select-Object -Last 1
+          "zip=$zip" >> $env:GITHUB_OUTPUT
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.package.outputs.zip }}

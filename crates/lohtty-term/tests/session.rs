@@ -55,6 +55,51 @@ fn shell_output_reaches_the_grid() {
     }
 }
 
+/// An app that begins a synchronized update (mode 2026) and never ends it
+/// must not freeze the screen: the update is flushed after its timeout.
+#[test]
+fn unterminated_synchronized_update_is_flushed() {
+    let shell = if cfg!(windows) {
+        ShellSpec {
+            program: "powershell.exe".into(),
+            args: vec![
+                "-NoProfile".into(),
+                "-Command".into(),
+                "[Console]::Write([char]27 + '[?2026hsync-flushed'); Start-Sleep 5".into(),
+            ],
+        }
+    } else {
+        ShellSpec {
+            program: "/bin/sh".into(),
+            args: vec![
+                "-c".into(),
+                "printf '\\033[?2026hsync-flushed'; sleep 5".into(),
+            ],
+        }
+    };
+    let size = TermSize {
+        cols: 80,
+        rows: 24,
+        cell_width: 8,
+        cell_height: 16,
+    };
+    let (session, _events) = Session::spawn(&shell, size, 100, Box::new(PassThrough)).unwrap();
+
+    // Well before the program exits (5 s), the text must be visible.
+    let deadline = Instant::now() + Duration::from_secs(4);
+    loop {
+        let text = screen_text(&session);
+        if text.contains("sync-flushed") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "synchronized update was never flushed:\n{text}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 #[test]
 fn resize_updates_grid_dimensions() {
     let shell = if cfg!(windows) {

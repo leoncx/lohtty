@@ -3,13 +3,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Instant;
 
 use alacritty_terminal::Term;
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Config as TermConfig;
-use alacritty_terminal::vte::ansi::{Processor, Rgb};
+use alacritty_terminal::vte::ansi::{Processor, Rgb, StdSyncHandler};
 use anyhow::Context as _;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
@@ -195,12 +196,28 @@ impl Session {
                 }
             })?;
 
+        // Synchronized updates (mode 2026) buffer output until the app ends
+        // them. The reader blocks in `read`, so a watchdog enforces the
+        // parser's deadline when an app never ends its update (e.g. it crashed).
+        let processor = Arc::new(Mutex::new(Processor::<StdSyncHandler>::new()));
+        let reader_done = Arc::new(AtomicBool::new(false));
+        let watchdog = {
+            let (processor, term, proxy, done) = (
+                processor.clone(),
+                term.clone(),
+                proxy.clone(),
+                reader_done.clone(),
+            );
+            thread::Builder::new()
+                .name("pty-sync".into())
+                .spawn(move || sync_watchdog(&processor, &term, &proxy, &done))?
+        };
+
         let reader_term = term.clone();
         let reader_pty_tx = pty_tx.clone();
         thread::Builder::new()
             .name("pty-reader".into())
             .spawn(move || {
-                let mut processor: Processor = Processor::new();
                 let mut buf = vec![0u8; 64 * 1024];
                 let (mut out, mut reply) = (Vec::new(), Vec::new());
                 loop {
@@ -220,11 +237,18 @@ impl Session {
                     if !reply.is_empty() {
                         let _ = reader_pty_tx.send(reply.clone());
                     }
-                    // TODO: honor the synchronized-update timeout (mode 2026) when
-                    // an app never closes its update.
-                    processor.advance(&mut *reader_term.lock(), &out);
+                    let syncing = {
+                        let mut processor = processor.lock().unwrap();
+                        processor.advance(&mut *reader_term.lock(), &out);
+                        processor.sync_timeout().sync_timeout().is_some()
+                    };
+                    if syncing {
+                        watchdog.thread().unpark();
+                    }
                     proxy.wakeup();
                 }
+                reader_done.store(true, Ordering::Release);
+                watchdog.thread().unpark();
                 let _ = proxy.events.try_send(SessionEvent::Exit);
             })?;
 
@@ -295,6 +319,40 @@ impl Session {
     /// Clears the pending-wakeup flag. Call before reading the grid for a repaint.
     pub fn clear_dirty(&self) {
         self.dirty.store(false, Ordering::Release);
+    }
+}
+
+/// Sleeps until woken by the reader, then flushes any synchronized update
+/// that outlives its deadline.
+fn sync_watchdog(
+    processor: &Mutex<Processor<StdSyncHandler>>,
+    term: &FairMutex<Term<EventProxy>>,
+    proxy: &EventProxy,
+    done: &AtomicBool,
+) {
+    while !done.load(Ordering::Acquire) {
+        thread::park();
+        loop {
+            let deadline = processor.lock().unwrap().sync_timeout().sync_timeout();
+            let Some(deadline) = deadline else { break };
+            let now = Instant::now();
+            if now < deadline {
+                thread::sleep(deadline - now);
+                continue;
+            }
+            let mut processor = processor.lock().unwrap();
+            // Re-check under the lock: the update may have ended meanwhile.
+            if processor
+                .sync_timeout()
+                .sync_timeout()
+                .is_some_and(|d| Instant::now() >= d)
+            {
+                tracing::debug!("synchronized update timed out; flushing");
+                processor.stop_sync(&mut *term.lock());
+                drop(processor);
+                proxy.wakeup();
+            }
+        }
     }
 }
 
