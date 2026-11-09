@@ -217,6 +217,7 @@ Each milestone ends with a runnable build.
   - gpui checks control areas before the top resize border, so the drag area starts 4 px below the top edge to keep resizing from the top.
   - Tested: maximize, restore, close, the red close hover, and dimmed glyphs when the window is inactive. Double-click to maximize is blocked on the dev machine by GlazeWM, for the native caption too.
   - macOS and Linux keep the native title bar. macOS would need room for the traffic lights.
+- **Split buttons:** "split right" and "split down" sit in the tab bar, left of the window buttons (on every platform). They act on the active pane and show their shortcut in a tooltip. The icons are drawn with divs in the theme colors.
 
 **M4 — Rendering polish** — **done**
 - Ligatures (run batching), font fallback for emoji and CJK, wide-character correctness.

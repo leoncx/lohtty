@@ -11,10 +11,35 @@ use super::*;
 use crate::CUSTOM_TITLEBAR;
 use crate::colors::{mix, to_rgba};
 use crate::pane_tree::Node;
+use crate::tooltip::Tooltip;
 
 /// Width of the divider hit area between panes, in pixels.
 const DIVIDER: f32 = 5.0;
 const TAB_BAR_HEIGHT: f32 = 34.0;
+
+/// A 14×12 pane outline divided in two: side by side for [`Axis::Horizontal`]
+/// (split right), stacked for [`Axis::Vertical`] (split down).
+fn split_icon(axis: Axis, color: Rgba) -> impl IntoElement {
+    let frame = div()
+        .flex()
+        .w(px(14.0))
+        .h(px(12.0))
+        .border_1()
+        .border_color(color)
+        .rounded(px(2.0));
+    match axis {
+        Axis::Horizontal => frame
+            .flex_row()
+            .child(div().flex_1())
+            .child(div().w(px(1.0)).h_full().bg(color))
+            .child(div().flex_1()),
+        Axis::Vertical => frame
+            .flex_col()
+            .child(div().flex_1())
+            .child(div().h(px(1.0)).w_full().bg(color))
+            .child(div().flex_1()),
+    }
+}
 
 /// Windows 11 caption glyphs, or the Windows 10 font with the same code points.
 fn caption_icon_font(window: &Window) -> SharedString {
@@ -125,22 +150,76 @@ impl Workspace {
             .bg(bar)
             .text_sm()
             .child(tabs)
+            .child(
+                // Empty space. With the custom title bar it drags the window
+                // (double-click maximizes, right-click opens the system menu);
+                // a thin strip on top is left out so the top edge still resizes.
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(32.0))
+                    .h_full()
+                    .when(CUSTOM_TITLEBAR, |el| {
+                        el.child(div().flex_none().h(px(4.0)))
+                            .child(div().flex_1().window_control_area(WindowControlArea::Drag))
+                    }),
+            )
+            .child(self.render_split_buttons(cx))
             .when(CUSTOM_TITLEBAR, |el| {
-                el.child(
-                    // Empty space drags the window (double-click maximizes,
-                    // right-click opens the system menu). A thin strip on top
-                    // is left out so the top edge still resizes the window.
-                    div()
-                        .flex()
-                        .flex_col()
-                        .flex_1()
-                        .min_w(px(32.0))
-                        .h_full()
-                        .child(div().flex_none().h(px(4.0)))
-                        .child(div().flex_1().window_control_area(WindowControlArea::Drag)),
-                )
-                .child(self.render_caption_buttons(window))
+                el.child(self.render_caption_buttons(window))
             })
+    }
+
+    /// "Split right" and "split down" buttons, acting on the active pane.
+    fn render_split_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = &self.theme;
+        let hover = to_rgba(mix(t.background, t.foreground, 0.12));
+        let icon_color = to_rgba(mix(t.foreground, t.background, 0.25));
+        let (right_keys, down_keys) = if cfg!(target_os = "macos") {
+            ("Cmd+D", "Cmd+Shift+D")
+        } else {
+            ("Alt+Shift+=", "Alt+Shift+-")
+        };
+        let button = |id: &'static str, axis: Axis, tip: String| {
+            div()
+                .id(id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .w(px(36.0))
+                .h_full()
+                .hover(|s| s.bg(hover))
+                .tooltip(Tooltip::text(tip, t))
+                .child(split_icon(axis, icon_color))
+        };
+
+        div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .h_full()
+            .child(
+                button(
+                    "split-right",
+                    Axis::Horizontal,
+                    format!("Split right ({right_keys})"),
+                )
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.split_right(&SplitRight, window, cx)),
+                ),
+            )
+            .child(
+                button(
+                    "split-down",
+                    Axis::Vertical,
+                    format!("Split down ({down_keys})"),
+                )
+                .on_click(
+                    cx.listener(|this, _, window, cx| this.split_down(&SplitDown, window, cx)),
+                ),
+            )
     }
 
     /// Minimize / maximize-restore / close, drawn like Windows 11's. The OS
