@@ -413,38 +413,58 @@ impl Render for Workspace {
             .text_color(to_rgba(theme.foreground))
             .font_family(self.config.font.family.clone())
             .text_size(px(self.config.font.size))
-            .on_action(cx.listener(Self::new_tab))
-            .on_action(cx.listener(Self::close_tab))
-            .on_action(cx.listener(Self::next_tab))
-            .on_action(cx.listener(Self::prev_tab))
-            .on_action(cx.listener(Self::split_right))
-            .on_action(cx.listener(Self::split_down))
-            .on_action(cx.listener(Self::close_pane))
             .on_action(cx.listener(Self::open_settings))
-            .on_action(cx.listener(|this, _: &FocusLeft, w, cx| {
-                this.focus_direction(Direction::Left, w, cx)
-            }))
-            .on_action(cx.listener(|this, _: &FocusRight, w, cx| {
-                this.focus_direction(Direction::Right, w, cx)
-            }))
-            .on_action(
-                cx.listener(|this, _: &FocusUp, w, cx| this.focus_direction(Direction::Up, w, cx)),
-            )
-            .on_action(cx.listener(|this, _: &FocusDown, w, cx| {
-                this.focus_direction(Direction::Down, w, cx)
-            }))
-            .on_action(cx.listener(|this, _: &ActivateTab1, w, cx| this.activate_tab(0, w, cx)))
-            .on_action(cx.listener(|this, _: &ActivateTab2, w, cx| this.activate_tab(1, w, cx)))
-            .on_action(cx.listener(|this, _: &ActivateTab3, w, cx| this.activate_tab(2, w, cx)))
-            .on_action(cx.listener(|this, _: &ActivateTab4, w, cx| this.activate_tab(3, w, cx)))
-            .on_action(cx.listener(|this, _: &ActivateTab5, w, cx| this.activate_tab(4, w, cx)))
-            .on_action(cx.listener(|this, _: &ActivateTab6, w, cx| this.activate_tab(5, w, cx)))
-            .on_action(cx.listener(|this, _: &ActivateTab7, w, cx| this.activate_tab(6, w, cx)))
-            .on_action(cx.listener(|this, _: &ActivateTab8, w, cx| this.activate_tab(7, w, cx)))
-            // Like browsers: the 9th shortcut is always the last tab.
-            .on_action(cx.listener(|this, _: &ActivateTab9, w, cx| {
-                this.activate_tab(this.tabs.len().saturating_sub(1), w, cx)
-            }))
+            // While the settings dialog is open, workspace shortcuts would act
+            // on the panes behind it; only Ctrl+, (refocus the dialog) stays.
+            .when(self.settings.is_none(), |el| {
+                el.on_action(cx.listener(Self::new_tab))
+                    .on_action(cx.listener(Self::close_tab))
+                    .on_action(cx.listener(Self::next_tab))
+                    .on_action(cx.listener(Self::prev_tab))
+                    .on_action(cx.listener(Self::split_right))
+                    .on_action(cx.listener(Self::split_down))
+                    .on_action(cx.listener(Self::close_pane))
+                    .on_action(cx.listener(|this, _: &FocusLeft, w, cx| {
+                        this.focus_direction(Direction::Left, w, cx)
+                    }))
+                    .on_action(cx.listener(|this, _: &FocusRight, w, cx| {
+                        this.focus_direction(Direction::Right, w, cx)
+                    }))
+                    .on_action(cx.listener(|this, _: &FocusUp, w, cx| {
+                        this.focus_direction(Direction::Up, w, cx)
+                    }))
+                    .on_action(cx.listener(|this, _: &FocusDown, w, cx| {
+                        this.focus_direction(Direction::Down, w, cx)
+                    }))
+                    .on_action(
+                        cx.listener(|this, _: &ActivateTab1, w, cx| this.activate_tab(0, w, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &ActivateTab2, w, cx| this.activate_tab(1, w, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &ActivateTab3, w, cx| this.activate_tab(2, w, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &ActivateTab4, w, cx| this.activate_tab(3, w, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &ActivateTab5, w, cx| this.activate_tab(4, w, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &ActivateTab6, w, cx| this.activate_tab(5, w, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &ActivateTab7, w, cx| this.activate_tab(6, w, cx)),
+                    )
+                    .on_action(
+                        cx.listener(|this, _: &ActivateTab8, w, cx| this.activate_tab(7, w, cx)),
+                    )
+                    // Like browsers: the 9th shortcut is always the last tab.
+                    .on_action(cx.listener(|this, _: &ActivateTab9, w, cx| {
+                        this.activate_tab(this.tabs.len().saturating_sub(1), w, cx)
+                    }))
+            })
             .on_mouse_move(
                 cx.listener(|this, ev: &MouseMoveEvent, _, cx| this.drag_to(ev.position, cx)),
             )

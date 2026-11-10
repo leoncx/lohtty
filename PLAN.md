@@ -224,7 +224,8 @@ Each milestone ends with a runnable build.
   - **Other buttons:** "Open config.toml" opens the file in the system editor, creating it if needed. Esc, Cancel and × close without saving. Enter in a field saves.
   - **Layout:** the dialog covers the panes, not the title bar, so the window stays movable and closable.
   - **`TextField`:** a reusable single-line input with the same text-input path as the terminal. Like the terminal, it lets Windows resolve a pending dead key (e.g. `"` on US-International) before acting on Enter or Esc.
-  - **Not handled:** the search bar's Enter after a dead key has the same issue and isn't fixed yet. Workspace shortcuts (new tab...) stay active while the dialog is open.
+  - **Search bar:** handles a pending dead key before Enter / Shift+Enter / Esc the same way, so `b"` + Enter searches for `b"`.
+  - **Shortcuts while open:** the workspace's action handlers are only registered while no dialog is open, so shortcuts like new tab, split, pane focus and tab switching do nothing behind the dialog. Ctrl+, still works and moves focus back to the dialog. The title-bar buttons can still be clicked.
 
 **M4 — Rendering polish** — **done**
 - Ligatures (run batching), font fallback for emoji and CJK, wide-character correctness.

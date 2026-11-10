@@ -32,6 +32,10 @@ pub struct SearchBar {
     /// Match counter ("3/12"), "No results", or a regex error.
     status: SharedString,
     theme: Theme,
+    /// A dead key (e.g. `"` on US-International) waiting for the next key.
+    dead_key: bool,
+    /// An action held back until Windows resolves the pending dead key.
+    deferred: Option<SearchEvent>,
 }
 
 impl EventEmitter<SearchEvent> for SearchBar {}
@@ -46,6 +50,8 @@ impl SearchBar {
             },
             status: SharedString::default(),
             theme,
+            dead_key: false,
+            deferred: None,
         }
     }
 
@@ -75,8 +81,37 @@ impl SearchBar {
         cx.notify();
     }
 
+    fn flush_deferred(&mut self, cx: &mut Context<Self>) {
+        if let Some(event) = self.deferred.take() {
+            cx.emit(event);
+        }
+    }
+
     fn on_key_down(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let mods = ev.keystroke.modifiers;
+        let action = match ev.keystroke.key.as_str() {
+            "escape" => Some(SearchEvent::Close),
+            "enter" if mods.shift => Some(SearchEvent::Down),
+            "enter" => Some(SearchEvent::Up),
+            _ => None,
+        };
+        if let Some(action) = action
+            && self.dead_key
+        {
+            // Same as `TextField`: let Windows commit the pending dead key as
+            // text first (propagating lets gpui call TranslateMessage), then
+            // act. A timer covers keys that produce no text.
+            self.dead_key = false;
+            self.deferred = Some(action);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(50))
+                    .await;
+                let _ = this.update(cx, |this, cx| this.flush_deferred(cx));
+            })
+            .detach();
+            return;
+        }
         match ev.keystroke.key.as_str() {
             "escape" => cx.emit(SearchEvent::Close),
             "enter" if mods.shift => cx.emit(SearchEvent::Down),
@@ -273,22 +308,26 @@ impl EntityInputHandler for SearchBar {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dead_key = false;
         let text: String = text.chars().filter(|c| !c.is_control()).collect();
         if !text.is_empty() {
             self.edit(|t| t.push_str(&text), cx);
         }
+        self.flush_deferred(cx);
     }
 
     fn replace_and_mark_text_in_range(
         &mut self,
         _range: Option<Range<usize>>,
-        _new_text: &str,
+        new_text: &str,
         _new_selected_range: Option<Range<usize>>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
         // Compositions (dead keys, IME) are committed through
-        // `replace_text_in_range`; nothing is shown while composing.
+        // `replace_text_in_range`; nothing is shown while composing. A
+        // one-character composition on Windows is a dead key.
+        self.dead_key = cfg!(windows) && new_text.chars().count() == 1;
     }
 
     fn bounds_for_range(
