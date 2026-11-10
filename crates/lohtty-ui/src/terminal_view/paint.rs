@@ -675,6 +675,21 @@ fn box_shapes(
                     out.push(BoxShape::Path(path, color.into()));
                 }
             }
+            Shape::Fill { start, segments } => {
+                let mut path = PathBuilder::fill();
+                path.move_to(at(start));
+                for [c1, c2, to] in segments {
+                    if c1 == c2 && c2 == to {
+                        path.line_to(at(to));
+                    } else {
+                        path.cubic_bezier_to(at(to), at(c1), at(c2));
+                    }
+                }
+                path.close();
+                if let Ok(path) = path.build() {
+                    out.push(BoxShape::Path(path, color.into()));
+                }
+            }
         }
     }
 }

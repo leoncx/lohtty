@@ -9,7 +9,7 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 - Background opacity and blur
 - Ligatures, plus Nerd Font icons through font fallbacks
 - UTF-8, wide characters (CJK) and emoji
-- Box-drawing and block characters drawn to join across cells, whatever the font
+- Box-drawing, block and Powerline characters drawn to join across cells, whatever the font
 - Mouse selection, clipboard, bracketed paste
 - Mouse reporting for terminal apps
 - OSC 8 hyperlinks

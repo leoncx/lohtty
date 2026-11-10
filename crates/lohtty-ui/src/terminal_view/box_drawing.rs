@@ -1,5 +1,6 @@
 //! Box-drawing (U+2500–U+257F) and block-element (U+2580–U+259F) characters,
-//! drawn as shapes instead of font glyphs. Font glyphs are designed for the
+//! and the Powerline symbols (U+E0B0–U+E0BF, from Nerd Fonts), drawn as
+//! shapes instead of font glyphs. Font glyphs are designed for the
 //! font's own line height, so at lohtty's 1.25 line spacing (or with a font
 //! that lacks them) lines don't join across cells. Here every line runs to
 //! the cell edges, and edges are snapped to device pixels so neighbors meet
@@ -36,11 +37,17 @@ pub enum Shape {
         segments: Vec<[(f32, f32); 3]>,
         width: f32,
     },
+    /// A filled outline, in the same form as `Stroke`, closed back to
+    /// `start`.
+    Fill {
+        start: (f32, f32),
+        segments: Vec<[(f32, f32); 3]>,
+    },
 }
 
 /// Whether `c` is drawn here rather than from the font.
 pub fn supported(c: char) -> bool {
-    matches!(c, '\u{2500}'..='\u{259F}')
+    matches!(c, '\u{2500}'..='\u{259F}' | '\u{E0B0}'..='\u{E0BF}')
 }
 
 /// Line weights, from the light line thickness in device pixels (scaled with
@@ -74,6 +81,7 @@ pub fn shapes(c: char, cell: Cell, weights: Weights) -> Option<Vec<Shape>> {
         '\u{256D}'..='\u{2570}' => d.arc(c),
         '\u{2571}'..='\u{2573}' => d.diagonal(c),
         '\u{2580}'..='\u{259F}' => d.block(c),
+        '\u{E0B0}'..='\u{E0BF}' => d.powerline(c),
         _ => d.lines(arms(c)?),
     }
     Some(out)
@@ -445,6 +453,72 @@ impl Draw<'_> {
         });
     }
 
+    /// Powerline arrows, half circles, corner triangles and slashes. Filled
+    /// shapes cover the whole cell height and touch the snapped cell edges,
+    /// so they meet the colored backgrounds next to them without a seam.
+    fn powerline(self, c: char) {
+        let (x0, x1, y0, y1) = self.edges();
+        let cy = (y0 + y1) / 2.0;
+        let width = self.weights.light;
+        let line = |p: (f32, f32)| [p, p, p];
+        let polygon = |points: &[(f32, f32)]| Shape::Fill {
+            start: points[0],
+            segments: points[1..].iter().map(|&p| line(p)).collect(),
+        };
+        let polyline = |points: &[(f32, f32)]| Shape::Stroke {
+            start: points[0],
+            segments: points[1..].iter().map(|&p| line(p)).collect(),
+            width,
+        };
+        // Half an ellipse filling the cell, bulging right or left: from the
+        // top corner of the flat side, through the middle of the far edge,
+        // to the bottom corner.
+        let half_circle = |right: bool| {
+            let (flat, far) = if right { (x0, x1) } else { (x1, x0) };
+            let (rx, ry) = (far - flat, (y1 - y0) / 2.0);
+            let k = 0.552_284_8;
+            vec![
+                [(flat + rx * k, y0), (far, cy - ry * k), (far, cy)],
+                [(far, cy + ry * k), (flat + rx * k, y1), (flat, y1)],
+            ]
+        };
+        let shape = match c {
+            // Arrows: solid and thin, right then left.
+            '\u{E0B0}' => polygon(&[(x0, y0), (x1, cy), (x0, y1)]),
+            '\u{E0B1}' => polyline(&[(x0, y0), (x1, cy), (x0, y1)]),
+            '\u{E0B2}' => polygon(&[(x1, y0), (x0, cy), (x1, y1)]),
+            '\u{E0B3}' => polyline(&[(x1, y0), (x0, cy), (x1, y1)]),
+            // Half circles: solid and thin, bulging right then left.
+            '\u{E0B4}' => Shape::Fill {
+                start: (x0, y0),
+                segments: half_circle(true),
+            },
+            '\u{E0B5}' => Shape::Stroke {
+                start: (x0, y0),
+                segments: half_circle(true),
+                width,
+            },
+            '\u{E0B6}' => Shape::Fill {
+                start: (x1, y0),
+                segments: half_circle(false),
+            },
+            '\u{E0B7}' => Shape::Stroke {
+                start: (x1, y0),
+                segments: half_circle(false),
+                width,
+            },
+            // Corner triangles: lower left, lower right, upper left, upper right.
+            '\u{E0B8}' => polygon(&[(x0, y0), (x1, y1), (x0, y1)]),
+            '\u{E0BA}' => polygon(&[(x1, y0), (x1, y1), (x0, y1)]),
+            '\u{E0BC}' => polygon(&[(x0, y0), (x1, y0), (x0, y1)]),
+            '\u{E0BE}' => polygon(&[(x0, y0), (x1, y0), (x1, y1)]),
+            // Separators: a backslash for E0B9 and E0BF, a slash for E0BB and E0BD.
+            '\u{E0B9}' | '\u{E0BF}' => polyline(&[(x0, y0), (x1, y1)]),
+            _ => polyline(&[(x0, y1), (x1, y0)]),
+        };
+        self.out.push(shape);
+    }
+
     /// ╱ ╲ ╳
     fn diagonal(self, c: char) {
         let (x0, x1, y0, y1) = self.edges();
@@ -540,7 +614,7 @@ mod tests {
             .into_iter()
             .map(|s| match s {
                 Shape::Rect { x0, y0, x1, y1, .. } => (x0, y0, x1, y1),
-                Shape::Stroke { .. } => panic!("{c:?} drew a stroke"),
+                other => panic!("{c:?} drew {other:?}"),
             })
             .collect()
     }
@@ -558,7 +632,11 @@ mod tests {
             let s = shapes(c, CELL, WEIGHTS).unwrap_or_else(|| panic!("{c:?} not drawn"));
             assert!(!s.is_empty(), "{c:?} drew nothing");
         }
-        assert!(!supported('A') && !supported('\u{25A0}'));
+        for c in '\u{E0B0}'..='\u{E0BF}' {
+            assert!(supported(c));
+            assert_eq!(shapes(c, CELL, WEIGHTS).unwrap().len(), 1, "{c:?}");
+        }
+        assert!(!supported('A') && !supported('\u{25A0}') && !supported('\u{E0C0}'));
     }
 
     #[test]
@@ -651,5 +729,49 @@ mod tests {
         };
         assert_eq!(start.0, 89.0);
         assert_eq!(segments.last().unwrap()[2].1, 60.0);
+    }
+
+    #[test]
+    fn powerline_arrows_fill_the_cell_height() {
+        // The solid right arrow: the flat side spans the whole cell, the point
+        // is at the middle of the right edge, so it meets the next cell's
+        // background.
+        let Shape::Fill { start, segments } = &shapes('\u{E0B0}', CELL, WEIGHTS).unwrap()[0] else {
+            panic!()
+        };
+        assert_eq!(*start, (80.0, 40.0));
+        assert_eq!(segments[0][2], (89.0, 50.0));
+        assert_eq!(segments[1][2], (80.0, 60.0));
+        // The left arrow mirrors it.
+        let Shape::Fill { start, segments } = &shapes('\u{E0B2}', CELL, WEIGHTS).unwrap()[0] else {
+            panic!()
+        };
+        assert_eq!(*start, (89.0, 40.0));
+        assert_eq!(segments[0][2], (80.0, 50.0));
+        // The thin arrows and half circles are outlines.
+        for c in ['\u{E0B1}', '\u{E0B3}', '\u{E0B5}', '\u{E0B7}'] {
+            assert!(matches!(
+                shapes(c, CELL, WEIGHTS).unwrap()[0],
+                Shape::Stroke { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn powerline_half_circles_reach_the_far_edge() {
+        // Bulging right: from the top-left corner through the middle of the
+        // right edge to the bottom-left corner.
+        let Shape::Fill { start, segments } = &shapes('\u{E0B4}', CELL, WEIGHTS).unwrap()[0] else {
+            panic!()
+        };
+        assert_eq!(*start, (80.0, 40.0));
+        assert_eq!(segments[0][2], (89.0, 50.0));
+        assert_eq!(segments[1][2], (80.0, 60.0));
+        // Bulging left.
+        let Shape::Fill { start, segments } = &shapes('\u{E0B6}', CELL, WEIGHTS).unwrap()[0] else {
+            panic!()
+        };
+        assert_eq!(*start, (89.0, 40.0));
+        assert_eq!(segments[0][2], (80.0, 50.0));
     }
 }

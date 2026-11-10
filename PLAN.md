@@ -310,7 +310,7 @@ Each milestone ends with a runnable build.
   - Dashes (2, 3 or 4 per cell), the half lines, all blocks and quadrants, and shades (25/50/75% of the foreground's opacity) are rectangles; rounded corners (cubic quarter circles) and diagonals are stroked paths. All are painted in the glyph layer, in the cell's foreground color.
   - Cells with underline, strikethrough or combining marks keep the font's glyph.
   - **Tested:** 8 geometry tests (every character drawn, edges reached, continuity, closed single and double corners, the double cross gap, block fractions, arcs). Live on Linux (Docker, Xvfb) and on Windows, the same script showed every box style, the dashes, blocks, a progress bar and inverse video joined cleanly.
-  - Powerline triangles (U+E0B0…) still come from the font.
+  - **Powerline** (U+E0B0–U+E0BF, the Nerd Font Powerline and Powerline Extra symbols) is drawn the same way: solid arrows, corner triangles and half circles are filled paths reaching the snapped cell edges and the full line height, so they meet the neighboring segment backgrounds; the thin arrows, half-circle outlines and slash separators are strokes. Checked live on Windows with arrow, thin-separator, pill and slanted segments on colored backgrounds, and with the owner's oh-my-posh prompt: no seams where a shape meets the next background.
 - **Docs:** `README.md` covers features, config, themes, shortcuts and troubleshooting.
 - **Render profiling:** frame-phase counters are logged with `LOHTTY_LOG=lohtty_ui::perf=debug`. Sampling profilers (samply, WPR) need admin rights on Windows. Measured on a 14 MB `cat` with the release build on a 165 Hz display:
 
