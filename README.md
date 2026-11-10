@@ -26,7 +26,21 @@ shortcut. Newer versions upgrade in place; uninstall from *Settings → Apps*.
 **Portable build.** Download `lohtty-<version>-windows-x64.zip` (or
 `-arm64.zip`), unzip it and run `lohtty.exe`.
 
-**From source** (Rust stable):
+**Releases aren't code-signed yet.** Windows SmartScreen shows *Windows
+protected your PC* the first time you run the installer or the exe: click
+**More info → Run anyway**. The installer shows the publisher as *Unknown*.
+To check that a download is the published file, compare its hash with the
+release's `SHA256SUMS`:
+
+```powershell
+Get-FileHash .\lohtty-<version>-windows-x64.msi -Algorithm SHA256
+```
+
+For the zip, you can also clear the download mark before extracting
+(*Properties → Unblock*, or `Unblock-File .\lohtty-<version>-windows-x64.zip`).
+
+**From source** (rustup installs the Rust version pinned in
+`rust-toolchain.toml`):
 
 ```powershell
 cargo build --release          # target\release\lohtty.exe
