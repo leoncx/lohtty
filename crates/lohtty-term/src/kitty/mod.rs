@@ -17,6 +17,7 @@
 mod command;
 mod decode;
 pub mod placeholder;
+mod shm;
 
 use std::collections::{HashMap, VecDeque};
 use std::io::Write as _;

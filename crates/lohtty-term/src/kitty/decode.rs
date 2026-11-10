@@ -1,5 +1,5 @@
-//! Turns a transmission (direct, file or temporary file; raw RGB/RGBA or
-//! PNG; optionally zlib-compressed) into RGBA pixels.
+//! Turns a transmission (direct, file, temporary file or shared memory; raw
+//! RGB/RGBA or PNG; optionally zlib-compressed) into RGBA pixels.
 
 use std::io::{Read, Seek, SeekFrom};
 
@@ -21,7 +21,10 @@ pub(super) fn decode(cmd: &Command, payload: &[u8]) -> Result<Decoded, String> {
     let data = match cmd.medium {
         b'd' => data,
         b'f' | b't' => read_file(cmd, &data)?,
-        b's' => return Err("EINVAL:shared memory transmission is not supported".into()),
+        b's' => {
+            let name = std::str::from_utf8(&data).map_err(|_| "EINVAL:bad shared memory name")?;
+            super::shm::read(name, cmd.offset, cmd.size)?
+        }
         _ => return Err("EINVAL:unknown transmission medium".into()),
     };
     let data = match cmd.compression {

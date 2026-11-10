@@ -3117,6 +3117,7 @@ dependencies = [
  "dirs 6.0.0",
  "flate2",
  "image",
+ "libc",
  "portable-pty",
  "tracing",
 ]
