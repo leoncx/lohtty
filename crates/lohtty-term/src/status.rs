@@ -181,12 +181,52 @@ fn text(value: Option<&&str>, max_encoded: usize) -> Option<Option<String>> {
     Some(Some(text))
 }
 
+/// Progress reported with OSC 9;4 (ConEmu, Windows Terminal):
+/// `ESC ] 9 ; 4 ; state ; value ST`, value 0–100.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Progress {
+    /// State 0: no progress.
+    Clear,
+    /// State 1.
+    Normal(Option<u8>),
+    /// State 2.
+    Error,
+    /// State 3.
+    Indeterminate,
+    /// State 4 (paused or warning).
+    Paused(Option<u8>),
+}
+
+/// Parses the part of an OSC 9 after `9;`, if it's progress (`4;…`).
+pub fn parse_progress(rest: &str) -> Option<Progress> {
+    let mut parts = rest.split(';');
+    if parts.next()? != "4" {
+        return None;
+    }
+    let state = parts.next().unwrap_or("0");
+    let value = parts
+        .next()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map(|v| v.min(100) as u8);
+    Some(match state.trim() {
+        "" | "0" => Progress::Clear,
+        "1" => Progress::Normal(value),
+        "2" => Progress::Error,
+        "3" => Progress::Indeterminate,
+        "4" => Progress::Paused(value),
+        _ => return None,
+    })
+}
+
 /// A pane's status records.
 #[derive(Default, Debug)]
 pub struct StatusBoard {
     /// Records by id, with the update counter of their last report.
     records: BTreeMap<String, (Record, u64)>,
     updates: u64,
+    /// An OSC 7501 report arrived: OSC 9;4 progress is ignored from then
+    /// on, until a full reset, as the protocol asks.
+    native: bool,
 }
 
 /// A record as shown: its id, and its app inherited from its ancestors.
@@ -202,26 +242,60 @@ impl StatusBoard {
         match message {
             Message::Query => false,
             Message::Set { id, record } => {
-                self.updates += 1;
-                let changed = self.records.get(&id).is_none_or(|(r, _)| *r != record);
-                self.records.insert(id, (record, self.updates));
-                if self.records.len() > MAX_RECORDS
-                    && let Some(oldest) = self
-                        .records
-                        .iter()
-                        .min_by_key(|(_, (_, at))| *at)
-                        .map(|(id, _)| id.clone())
-                {
-                    self.records.remove(&oldest);
-                }
-                changed
+                self.native = true;
+                self.set(id, record)
             }
-            Message::Clear { id: None } => self.remove(|_| true),
+            Message::Clear { id: None } => {
+                self.native = true;
+                self.remove(|_| true)
+            }
             Message::Clear { id: Some(id) } => {
+                self.native = true;
                 let below = format!("{id}/");
                 self.remove(|r| *r == id || r.starts_with(&below))
             }
         }
+    }
+
+    /// Applies OSC 9;4 progress to the root record (unless the program also
+    /// speaks OSC 7501). Paused progress is still work in progress.
+    pub fn progress(&mut self, progress: Progress) -> bool {
+        if self.native {
+            return false;
+        }
+        let record = |state, progress| Record {
+            state,
+            kind: None,
+            progress,
+            app: None,
+            title: None,
+            msg: None,
+        };
+        match progress {
+            Progress::Clear => self.records.remove("").is_some(),
+            Progress::Normal(value) | Progress::Paused(value) => {
+                self.set(String::new(), record(State::Working, value))
+            }
+            Progress::Indeterminate => self.set(String::new(), record(State::Working, None)),
+            Progress::Error => self.set(String::new(), record(State::Error, None)),
+        }
+    }
+
+    /// Replaces one record, evicting the least recently updated when full.
+    fn set(&mut self, id: String, record: Record) -> bool {
+        self.updates += 1;
+        let changed = self.records.get(&id).is_none_or(|(r, _)| *r != record);
+        self.records.insert(id, (record, self.updates));
+        if self.records.len() > MAX_RECORDS
+            && let Some(oldest) = self
+                .records
+                .iter()
+                .min_by_key(|(_, (_, at))| *at)
+                .map(|(id, _)| id.clone())
+        {
+            self.records.remove(&oldest);
+        }
+        changed
     }
 
     fn remove(&mut self, doomed: impl Fn(&String) -> bool) -> bool {
@@ -241,6 +315,7 @@ impl StatusBoard {
 
     /// A full reset (RIS) removes everything.
     pub fn reset(&mut self) -> bool {
+        self.native = false;
         self.remove(|_| true)
     }
 
@@ -394,6 +469,38 @@ mod tests {
         // Seeing the pane drops results.
         assert!(b.seen());
         assert!(b.shown().is_empty());
+    }
+
+    #[test]
+    fn osc9_4_progress() {
+        assert_eq!(parse_progress("4;1;50"), Some(Progress::Normal(Some(50))));
+        assert_eq!(parse_progress("4;1"), Some(Progress::Normal(None)));
+        assert_eq!(parse_progress("4;1;250"), Some(Progress::Normal(Some(100))));
+        assert_eq!(parse_progress("4;0;0"), Some(Progress::Clear));
+        assert_eq!(parse_progress("4"), Some(Progress::Clear));
+        assert_eq!(parse_progress("4;2"), Some(Progress::Error));
+        assert_eq!(parse_progress("4;3"), Some(Progress::Indeterminate));
+        assert_eq!(parse_progress("4;4;80"), Some(Progress::Paused(Some(80))));
+        assert_eq!(parse_progress("4;9"), None);
+        assert_eq!(parse_progress("9;C:\\"), None, "another ConEmu command");
+
+        let mut b = StatusBoard::default();
+        assert!(b.progress(Progress::Normal(Some(30))));
+        let root = &b.shown()[0];
+        assert_eq!(
+            (root.id.as_str(), root.record.state, root.record.progress),
+            ("", State::Working, Some(30))
+        );
+        assert!(b.progress(Progress::Error));
+        assert_eq!(b.shown()[0].record.state, State::Error);
+        assert!(b.progress(Progress::Clear));
+        assert!(b.shown().is_empty());
+        // Once the program speaks OSC 7501, OSC 9;4 is ignored until a reset.
+        apply(&mut b, "state=working:app=claude-code");
+        assert!(!b.progress(Progress::Normal(Some(10))));
+        assert_eq!(b.shown()[0].record.progress, None);
+        b.reset();
+        assert!(b.progress(Progress::Indeterminate));
     }
 
     #[test]

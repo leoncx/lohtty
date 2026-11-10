@@ -16,7 +16,7 @@ use lohtty_term::notify::Notification;
 use lohtty_term::status::{Kind, Shown, State};
 use lohtty_theme::Theme;
 
-use crate::notifier::{self, Notifier};
+use crate::notifier::{self, Notifier, TaskbarProgress};
 use crate::pane_tree::{Axis, Direction, PaneTree, Removed, SplitId};
 use crate::settings::{SettingsDialog, SettingsEvent};
 use crate::terminal_view::{TerminalEvent, spawn_session};
@@ -358,6 +358,27 @@ impl Workspace {
             .iter()
             .filter_map(|p| p.read(cx).status().into_iter().next())
             .max_by_key(|s| s.record.state.urgency())
+    }
+
+    /// The taskbar shows the most urgent status of all tabs, so work in a
+    /// background tab shows while lohtty is minimized.
+    fn taskbar_progress(&self, cx: &App) -> TaskbarProgress {
+        let top = self
+            .tabs
+            .iter()
+            .filter_map(|tab| self.tab_status(tab, cx))
+            .max_by_key(|s| s.record.state.urgency());
+        let Some(Shown { record, .. }) = top else {
+            return TaskbarProgress::None;
+        };
+        match record.state {
+            State::Working => record
+                .progress
+                .map_or(TaskbarProgress::Indeterminate, TaskbarProgress::Normal),
+            State::Blocked => TaskbarProgress::Paused(record.progress.unwrap_or(100)),
+            State::Error => TaskbarProgress::Error,
+            State::Done | State::Idle => TaskbarProgress::None,
+        }
     }
 
     fn any_working(&self, cx: &App) -> bool {

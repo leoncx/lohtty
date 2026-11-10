@@ -22,6 +22,8 @@ version and changelog section, and uses that section as the release notes.
 - Themes (Tokyo Night by default) and live config reload.
 - Background opacity and blur, ligatures, Nerd Font icon fallbacks.
 - Mouse selection, clipboard, bracketed paste, mouse reporting, OSC 8 links.
+- Progress (OSC 9;4, as in Windows Terminal) on the tab, and on Windows on
+  the taskbar button, which also reflects agents' status.
 - Session status for coding agents and other programs (Program Status
   Protocol, OSC 7501): working, blocked, done or failed, shown on the tab.
 - Shift+Enter in coding agents and other programs: the kitty keyboard

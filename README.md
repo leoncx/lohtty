@@ -192,6 +192,13 @@ tooltip has the program's message. Done and error clear when you visit the
 pane. A program that becomes blocked, done or failed in a pane you aren't
 looking at also triggers the alerts above. Nothing needs to be turned on.
 
+**Progress.** Programs that report progress the Windows Terminal way
+(OSC 9;4), such as winget or PowerShell's `Write-Progress` with
+`$PSStyle.Progress.UseOSCIndicator = $true`, get the same tab spinner and
+percentage. On Windows, lohtty's taskbar button shows the most urgent status
+of all tabs: a progress bar, a busy marquee, yellow when a program waits for
+you, red on error.
+
 **Shift+Enter** inserts a new line in agents' prompts instead of sending
 them. lohtty supports the kitty keyboard protocol (the level programs use to
 tell modified keys apart), and on Windows it also sends modified Enter the

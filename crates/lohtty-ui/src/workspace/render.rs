@@ -529,6 +529,7 @@ impl Workspace {
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        notifier::taskbar_progress(window, self.taskbar_progress(cx));
         let theme = &self.theme;
         let body = match self.tabs.get(self.active_tab) {
             Some(tab) => self.render_node(tab.panes.root(), cx),

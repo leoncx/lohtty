@@ -46,6 +46,29 @@ impl Notifier {
     }
 }
 
+/// What the taskbar button shows as progress.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TaskbarProgress {
+    None,
+    /// A green bar, 0–100.
+    Normal(u8),
+    /// A moving marquee: busy, amount unknown.
+    Indeterminate,
+    /// A yellow bar, 0–100: waiting.
+    Paused(u8),
+    /// A red bar.
+    Error,
+}
+
+/// Shows progress on the window's taskbar button (Windows), as Windows
+/// Terminal does. Repeated calls with the same value do nothing.
+pub fn taskbar_progress(window: &Window, progress: TaskbarProgress) {
+    #[cfg(windows)]
+    windows::taskbar_progress(window, progress);
+    #[cfg(not(windows))]
+    let _ = (window, progress);
+}
+
 /// Flashes the window's taskbar button until the window is activated.
 pub fn flash(window: &Window) {
     #[cfg(windows)]
@@ -57,10 +80,17 @@ pub fn flash(window: &Window) {
 #[cfg(windows)]
 mod windows {
     use std::cell::{Cell, RefCell};
+    use std::ffi::c_void;
     use std::ptr::null;
 
     use gpui::Window;
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+    };
+    use windows_sys::core::GUID;
+
+    use super::TaskbarProgress;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::Shell::{
         NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_LARGE_ICON, NIIF_USER, NIM_ADD, NIM_DELETE,
@@ -251,16 +281,111 @@ mod windows {
         unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
     }
 
-    pub fn flash(window: &Window) {
+    fn hwnd(window: &Window) -> Option<HWND> {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        let Ok(RawWindowHandle::Win32(handle)) =
-            HasWindowHandle::window_handle(window).map(|h| h.as_raw())
-        else {
+        match HasWindowHandle::window_handle(window).map(|h| h.as_raw()) {
+            Ok(RawWindowHandle::Win32(handle)) => Some(handle.hwnd.get() as HWND),
+            _ => None,
+        }
+    }
+
+    /// The `ITaskbarList3` methods used, by vtable slot (after IUnknown's
+    /// three, `ITaskbarList`'s five and `ITaskbarList2`'s one).
+    #[repr(C)]
+    struct TaskbarListVtbl {
+        _iunknown: [usize; 3],
+        hr_init: unsafe extern "system" fn(*mut c_void) -> i32,
+        _taskbar_list: [usize; 4],
+        _taskbar_list2: [usize; 1],
+        set_progress_value: unsafe extern "system" fn(*mut c_void, HWND, u64, u64) -> i32,
+        set_progress_state: unsafe extern "system" fn(*mut c_void, HWND, i32) -> i32,
+    }
+
+    thread_local! {
+        /// The taskbar object (created on first use), and the last progress
+        /// shown per window.
+        static TASKBAR: Cell<*mut c_void> = const { Cell::new(std::ptr::null_mut()) };
+        static SHOWN_PROGRESS: RefCell<Vec<(HWND, TaskbarProgress)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn taskbar() -> Option<*mut c_void> {
+        let existing = TASKBAR.get();
+        if !existing.is_null() {
+            return Some(existing);
+        }
+        const CLSID_TASKBAR_LIST: GUID = GUID::from_u128(0x56fdf344_fd6d_11d0_958a_006097c9a090);
+        const IID_ITASKBAR_LIST3: GUID = GUID::from_u128(0xea1afb91_9e28_4b86_90e9_9e9f8a5eefaf);
+        let mut object: *mut c_void = std::ptr::null_mut();
+        // SAFETY: COM is (or gets) initialized on this UI thread; a failed
+        // creation leaves `object` null.
+        unsafe {
+            CoInitializeEx(null(), COINIT_APARTMENTTHREADED as u32);
+            let hr = CoCreateInstance(
+                &CLSID_TASKBAR_LIST,
+                std::ptr::null_mut(),
+                CLSCTX_INPROC_SERVER,
+                &IID_ITASKBAR_LIST3,
+                &mut object,
+            );
+            if hr < 0 || object.is_null() {
+                return None;
+            }
+            let vtbl = *(object as *const *const TaskbarListVtbl);
+            ((*vtbl).hr_init)(object);
+        }
+        TASKBAR.set(object);
+        Some(object)
+    }
+
+    pub fn taskbar_progress(window: &Window, progress: TaskbarProgress) {
+        let Some(hwnd) = hwnd(window) else {
+            return;
+        };
+        let unchanged = SHOWN_PROGRESS.with_borrow_mut(|shown| {
+            match shown.iter_mut().find(|(h, _)| *h == hwnd) {
+                Some((_, last)) if *last == progress => true,
+                Some((_, last)) => {
+                    *last = progress;
+                    false
+                }
+                None => {
+                    shown.push((hwnd, progress));
+                    progress == TaskbarProgress::None
+                }
+            }
+        });
+        if unchanged {
+            return;
+        }
+        let Some(object) = taskbar() else {
+            return;
+        };
+        // TBPF_* flags.
+        let (state, value) = match progress {
+            TaskbarProgress::None => (0, None),
+            TaskbarProgress::Indeterminate => (1, None),
+            TaskbarProgress::Normal(v) => (2, Some(v)),
+            TaskbarProgress::Error => (4, Some(100)),
+            TaskbarProgress::Paused(v) => (8, Some(v)),
+        };
+        // SAFETY: `object` is a live ITaskbarList3 owned by this thread, and
+        // `hwnd` this process's window.
+        unsafe {
+            let vtbl = *(object as *const *const TaskbarListVtbl);
+            ((*vtbl).set_progress_state)(object, hwnd, state);
+            if let Some(v) = value {
+                ((*vtbl).set_progress_value)(object, hwnd, v.min(100) as u64, 100);
+            }
+        }
+    }
+
+    pub fn flash(window: &Window) {
+        let Some(hwnd) = hwnd(window) else {
             return;
         };
         let info = FLASHWINFO {
             cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
-            hwnd: handle.hwnd.get() as HWND,
+            hwnd,
             // Until the window comes to the foreground.
             dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG,
             uCount: 0,

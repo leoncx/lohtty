@@ -32,6 +32,8 @@ pub enum OscEvent {
     Notification(Notification),
     /// An OSC 7501 report or query.
     Status(crate::status::Message),
+    /// OSC 9;4 progress.
+    Progress(crate::status::Progress),
     /// A shell prompt starts (OSC 133 A).
     PromptStart,
     /// A full reset (RIS).
@@ -123,6 +125,9 @@ impl OscScanner {
         let osc = String::from_utf8_lossy(&self.osc).into_owned();
         let (code, rest) = osc.split_once(';').unwrap_or((&osc, ""));
         let event = match code {
+            "9" if rest == "4" || rest.starts_with("4;") => {
+                crate::status::parse_progress(rest).map(OscEvent::Progress)
+            }
             "9" => osc9(rest).map(OscEvent::Notification),
             "777" => osc777(rest).map(OscEvent::Notification),
             "99" => self.osc99(rest).map(OscEvent::Notification),

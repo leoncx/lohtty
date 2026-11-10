@@ -301,6 +301,7 @@ impl Session {
                                 false
                             }
                             OscEvent::Status(message) => board.apply(message),
+                            OscEvent::Progress(progress) => board.progress(progress),
                             OscEvent::PromptStart => board.prompt(),
                             OscEvent::Reset => board.reset(),
                         };
