@@ -18,8 +18,13 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 
 ## Install
 
-**Portable build.** Download `lohtty-<version>-windows-x64.zip` from the
-releases page, unzip it and run `lohtty.exe`.
+**Installer.** Download `lohtty-<version>-windows-x64.msi` (or `-arm64.msi`)
+from the releases page and run it. It installs for the current user only, in
+`%LOCALAPPDATA%\Programs\lohtty`, without admin rights, and adds a Start menu
+shortcut. Newer versions upgrade in place; uninstall from *Settings → Apps*.
+
+**Portable build.** Download `lohtty-<version>-windows-x64.zip` (or
+`-arm64.zip`), unzip it and run `lohtty.exe`.
 
 **From source** (Rust stable):
 

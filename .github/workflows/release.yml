@@ -32,7 +32,8 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        target: [x86_64-pc-windows-msvc]
+        # ARM64 is cross-compiled on the x64 runner, so it isn't launched.
+        target: [x86_64-pc-windows-msvc, aarch64-pc-windows-msvc]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,10 +42,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+      - name: Install WiX 5
+        # v5 (MS-RL); v6+ adds the Open Source Maintenance Fee EULA.
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
       - name: Package
         shell: pwsh
-        run: ./scripts/package.ps1 -Target ${{ matrix.target }}
+        run: ./scripts/package.ps1 -Target ${{ matrix.target }} -Msi
       - name: Smoke test
+        if: startsWith(matrix.target, 'x86_64')
         shell: pwsh
         run: |
           # The exe must start and keep running (it has a window, so no output).
@@ -53,10 +60,28 @@ jobs:
           Start-Sleep -Seconds 5
           if ($p.HasExited) { throw "lohtty exited early with code $($p.ExitCode)" }
           $p.Kill()
+      - name: Installer test
+        if: startsWith(matrix.target, 'x86_64')
+        shell: pwsh
+        run: |
+          # Per-user install, launch, uninstall; nothing may be left behind.
+          $msi = (Get-ChildItem dist/*.msi).FullName
+          $dir = "$env:LOCALAPPDATA\Programs\lohtty"
+          $run = { param($verb) (Start-Process msiexec.exe -ArgumentList @($verb, $msi, '/qn') -Wait -PassThru).ExitCode }
+          if ((& $run '/i') -ne 0) { throw 'install failed' }
+          if (-not (Test-Path "$dir\lohtty.exe")) { throw 'lohtty.exe not installed' }
+          $p = Start-Process "$dir\lohtty.exe" -PassThru
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { throw "installed lohtty exited early ($($p.ExitCode))" }
+          $p.Kill(); $p.WaitForExit()
+          if ((& $run '/x') -ne 0) { throw 'uninstall failed' }
+          if (Test-Path $dir) { throw 'install folder left behind' }
       - uses: actions/upload-artifact@v4
         with:
           name: windows-${{ matrix.target }}
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*.msi
           if-no-files-found: error
 
   publish:
@@ -71,7 +96,7 @@ jobs:
       - name: Checksums
         run: |
           mkdir release
-          find artifacts -name '*.zip' -exec cp {} release/ \;
+          find artifacts \( -name '*.zip' -o -name '*.msi' \) -exec cp {} release/ \;
           cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:

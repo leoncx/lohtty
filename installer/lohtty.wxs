@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Per-user MSI for lohtty (WiX v5). Built by scripts/package.ps1 -Msi:
+    wix build installer/lohtty.wxs -arch x64 -ext WixToolset.UI.wixext
+      -d Version=X.Y.Z -d BinDir=<dir with lohtty.exe> -d LicenseRtf=<file>
+
+  Installs to %LOCALAPPDATA%\Programs\lohtty without admin rights, adds a
+  Start menu shortcut, and upgrades in place.
+
+  NEVER change the UpgradeCode: it is how new versions find and replace the
+  installed one.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+  <Package Name="lohtty"
+           Manufacturer="lohtty"
+           Version="$(Version)"
+           UpgradeCode="415C7072-CE59-4CBB-9F10-A187E4092B4F"
+           Scope="perUser"
+           Language="1033">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of lohtty is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Icon Id="lohtty.ico" SourceFile="assets\icons\lohtty.ico" />
+    <Property Id="ARPPRODUCTICON" Value="lohtty.ico" />
+
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(LicenseRtf)" />
+
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsDir" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="lohtty" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Per-user components must use an HKCU value as their key path, so
+         the ones holding files need fixed GUIDs (never change them). -->
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Component Id="Exe" Guid="8EEB2179-097F-4200-AF63-F85F24E169AE">
+        <File Id="lohtty.exe" Source="$(BinDir)\lohtty.exe" />
+        <RegistryValue Root="HKCU" Key="Software\lohtty" Name="InstallDir"
+                       Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+        <RemoveFolder Id="RemoveProgramsDir" Directory="ProgramsDir" On="uninstall" />
+      </Component>
+      <Component Id="Docs" Guid="DB16B1DE-EC64-4B62-8E15-25C4FBF659F9">
+        <File Id="README.md" Source="README.md" />
+        <File Id="LICENSE.txt" Source="LICENSE" Name="LICENSE.txt" />
+        <File Id="CHANGELOG.md" Source="CHANGELOG.md" />
+        <RegistryValue Root="HKCU" Key="Software\lohtty" Name="Docs"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut Id="lohttyShortcut"
+                  Name="lohtty"
+                  Description="lohtty terminal"
+                  Target="[INSTALLFOLDER]lohtty.exe"
+                  WorkingDirectory="INSTALLFOLDER" />
+        <RegistryValue Root="HKCU" Key="Software\lohtty" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="lohtty">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Package>
+</Wix>
