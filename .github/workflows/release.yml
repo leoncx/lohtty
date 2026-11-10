@@ -90,8 +90,9 @@ jobs:
       fail-fast: true
       matrix:
         # Built on the oldest supported distribution: the binary needs at
-        # least its glibc (2.35). The ARM runner is free for public repos only.
-        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+        # least its glibc (2.35). ARM64 (ubuntu-22.04-arm) would need a public
+        # repository: GitHub's ARM runners are free for public repos only.
+        runner: [ubuntu-22.04]
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4

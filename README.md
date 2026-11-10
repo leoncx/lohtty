@@ -50,8 +50,8 @@ For the zip, you can also clear the download mark before extracting
 **Linux.** Releases need glibc 2.35 or later (Ubuntu 22.04, Debian 12,
 Fedora 36 and newer) and a Vulkan driver.
 
-- **AppImage:** download `lohtty-<version>-linux-x86_64.AppImage` (or
-  `-aarch64`), then `chmod +x` it and run it. It needs FUSE (most desktops
+- **AppImage:** download `lohtty-<version>-linux-x86_64.AppImage`, then
+  `chmod +x` it and run it. It needs FUSE (most desktops
   have it); without it, run it with `--appimage-extract-and-run`.
 - **Tarball:** `lohtty-<version>-linux-x86_64.tar.gz` holds the binary, a
   `.desktop` entry and the icon. It uses the system's `libxkbcommon` and
