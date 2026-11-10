@@ -11,6 +11,13 @@ async-channel = "2.5"
 anyhow.workspace = true
 tracing.workspace = true
 dirs.workspace = true
+base64 = { version = "0.22", optional = true }
+flate2 = { version = "1", optional = true }
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+
+[features]
+# The kitty graphics protocol (see `kitty` module).
+kitty-graphics = ["dep:base64", "dep:flate2", "dep:image"]
 
 [lints]
 workspace = true

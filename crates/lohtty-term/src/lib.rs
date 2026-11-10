@@ -3,6 +3,8 @@
 
 mod filter;
 pub mod input;
+#[cfg(feature = "kitty-graphics")]
+pub mod kitty;
 pub mod mouse;
 pub mod search;
 mod session;

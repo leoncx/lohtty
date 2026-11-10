@@ -37,4 +37,6 @@ jobs:
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev libssl-dev
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Build without kitty graphics
+        run: cargo clippy -p lohtty --no-default-features --all-targets -- -D warnings
       - run: cargo test --workspace

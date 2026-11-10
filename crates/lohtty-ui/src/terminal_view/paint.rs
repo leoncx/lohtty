@@ -30,6 +30,9 @@ pub(super) struct FramePainter {
     pub fonts: [Font; 4],
     /// Whether the fonts request ligatures (`calt`, `liga`).
     pub ligatures: bool,
+    /// Kitty graphics of this session, if enabled.
+    #[cfg(feature = "kitty-graphics")]
+    pub images: Option<super::images::ImageLayer>,
     pub metrics: CellMetrics,
     pub focused: bool,
     pub painted: Rc<Cell<PaintState>>,
@@ -90,6 +93,8 @@ pub(super) struct Frame {
     cursor_below: Option<PaintQuad>,
     lines: Vec<(Point<Pixels>, ShapedLine)>,
     glyphs: Vec<CellGlyph>,
+    #[cfg(feature = "kitty-graphics")]
+    images: super::images::ImageFrame,
     /// Distance from the top of a cell to the text baseline.
     baseline: Pixels,
     font_size: Pixels,
@@ -136,6 +141,8 @@ impl FramePainter {
         let mut cursor_above = None;
         let mut cursor_bounds = None;
 
+        #[cfg(feature = "kitty-graphics")]
+        let mut markers = Vec::new();
         {
             let term = self.session.term().lock();
 
@@ -240,7 +247,16 @@ impl FramePainter {
                 // back and only added to the current segment if more text
                 // follows on the same row, so a row shapes as one segment
                 // (glyphs are snapped to cells) without trailing blanks.
-                let hyperlink = cell.hyperlink().is_some();
+                let link = cell.hyperlink();
+                // Kitty image markers are blank cells, not links.
+                #[cfg(feature = "kitty-graphics")]
+                let link = link.filter(|h| {
+                    let marker = super::images::marker(h.uri(), row, col);
+                    let is_marker = marker.is_some();
+                    markers.extend(marker);
+                    !is_marker
+                });
+                let hyperlink = link.is_some();
                 let underlined = flags.intersects(Flags::ALL_UNDERLINES) || hyperlink;
                 let decorated = underlined || flags.contains(Flags::STRIKEOUT);
                 if flags.contains(Flags::HIDDEN) {
@@ -385,6 +401,13 @@ impl FramePainter {
             }
         }
 
+        #[cfg(feature = "kitty-graphics")]
+        let images = self
+            .images
+            .as_ref()
+            .map(|layer| layer.layout(markers, bounds, m))
+            .unwrap_or_default();
+
         self.painted.set(PaintState {
             grid: Some(GridGeometry {
                 origin: bounds.origin,
@@ -452,6 +475,8 @@ impl FramePainter {
             cursor_below,
             lines,
             glyphs,
+            #[cfg(feature = "kitty-graphics")]
+            images,
             baseline,
             font_size: m.font_size,
             bounds,
@@ -625,6 +650,8 @@ impl Frame {
         if let Some(c) = self.cursor_below {
             window.paint_quad(c);
         }
+        #[cfg(feature = "kitty-graphics")]
+        self.images.paint(true, window);
         for (origin, line) in &self.lines {
             let _ = line.paint(*origin, self.line_height, window, cx);
         }
@@ -640,6 +667,8 @@ impl Frame {
                 };
             }
         });
+        #[cfg(feature = "kitty-graphics")]
+        self.images.paint(false, window);
         if let Some(c) = self.cursor_above {
             window.paint_quad(c);
         }
@@ -647,5 +676,7 @@ impl Frame {
             window.paint_quad(backdrop);
             let _ = line.paint(origin, self.line_height, window, cx);
         }
+        #[cfg(feature = "kitty-graphics")]
+        self.images.release(window);
     }
 }

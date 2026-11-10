@@ -1,5 +1,7 @@
 //! The terminal grid view: paints a [`Session`]'s screen and forwards input.
 
+#[cfg(feature = "kitty-graphics")]
+mod images;
 mod input;
 mod paint;
 mod search;
@@ -150,15 +152,23 @@ pub struct TerminalView {
     paint_now: PaintNow,
     /// When input was last sent to the shell.
     last_input: Option<Instant>,
+    #[cfg(feature = "kitty-graphics")]
+    images: Option<images::ImageLayer>,
     _events: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
+/// A started shell, ready to be shown by a [`TerminalView`].
+pub struct Spawned {
+    session: Session,
+    events: async_channel::Receiver<SessionEvent>,
+    #[cfg(feature = "kitty-graphics")]
+    graphics: Option<lohtty_term::kitty::Graphics>,
+}
+
 /// Starts the configured shell. Separate from [`TerminalView::new`] so that
 /// failures surface before a view is created.
-pub fn spawn_session(
-    config: &Config,
-) -> anyhow::Result<(Session, async_channel::Receiver<SessionEvent>)> {
+pub fn spawn_session(config: &Config) -> anyhow::Result<Spawned> {
     let shell = resolve_shell(config.shell.program.as_deref(), &config.shell.args);
     // The real size is applied on first paint, once the layout is known.
     let initial = TermSize {
@@ -167,18 +177,41 @@ pub fn spawn_session(
         cell_width: 8,
         cell_height: 16,
     };
-    Session::spawn(&shell, initial, config.scrollback, Box::new(PassThrough))
+    #[cfg(feature = "kitty-graphics")]
+    let graphics = config
+        .graphics
+        .kitty
+        .then(lohtty_term::kitty::Graphics::new);
+    #[cfg(feature = "kitty-graphics")]
+    let filter: Box<dyn lohtty_term::OutputFilter> = match &graphics {
+        Some(g) => Box::new(g.filter()),
+        None => Box::new(PassThrough),
+    };
+    #[cfg(not(feature = "kitty-graphics"))]
+    let filter = Box::new(PassThrough);
+    let (session, events) = Session::spawn(&shell, initial, config.scrollback, filter)?;
+    Ok(Spawned {
+        session,
+        events,
+        #[cfg(feature = "kitty-graphics")]
+        graphics,
+    })
 }
 
 impl TerminalView {
     pub fn new(
-        session: Session,
-        events: async_channel::Receiver<SessionEvent>,
+        spawned: Spawned,
         config: &Config,
         theme: Theme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let Spawned {
+            session,
+            events,
+            #[cfg(feature = "kitty-graphics")]
+            graphics,
+        } = spawned;
         let task = cx.spawn_in(window, async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 let alive =
@@ -223,6 +256,8 @@ impl TerminalView {
             output_frame_pending: false,
             paint_now: PaintNow::default(),
             last_input: None,
+            #[cfg(feature = "kitty-graphics")]
+            images: graphics.map(images::ImageLayer::new),
             _events: task,
             _subscriptions: subscriptions,
         }
@@ -433,6 +468,8 @@ impl Render for TerminalView {
             theme: self.theme.clone(),
             fonts,
             ligatures: self.font.ligatures,
+            #[cfg(feature = "kitty-graphics")]
+            images: self.images.clone(),
             metrics,
             focused: self.focus.is_focused(window),
             painted: self.painted.clone(),

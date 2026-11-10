@@ -3113,7 +3113,10 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "async-channel 2.5.0",
+ "base64",
  "dirs 6.0.0",
+ "flate2",
+ "image",
  "portable-pty",
  "tracing",
 ]
@@ -3135,6 +3138,7 @@ dependencies = [
  "anyhow",
  "async-channel 2.5.0",
  "gpui",
+ "image",
  "lohtty-config",
  "lohtty-term",
  "lohtty-theme",

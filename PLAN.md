@@ -336,6 +336,15 @@ Each milestone ends with a runnable build.
 - Delete commands, then file and temp-file transmission, then animation (stretch goal).
 - ✅ Done when `kitty +kitten icat` (through WSL), `timg`, and `yazi` previews work, and a build without the feature is unchanged.
 
+*Status: core done (branch `m7-kitty-graphics`); real-client checks pending.*
+- **ConPTY spike:** APC sequences pass through ConPTY intact on Windows 11 build 26300 (`cargo run -p lohtty-term --example apc_probe`), in both directions: a query's reply (`ESC _G i=31;OK ESC \`) reaches a console program reading stdin in VT input mode.
+- **Feature and config:** `kitty-graphics` cargo feature, on by default in the `lohtty` binary (`--no-default-features` leaves it out; CI builds both). `graphics.kitty = false` turns it off for new tabs and panes.
+- **Filter** (`lohtty_term::kitty`): a streaming scanner takes `ESC _ G … ESC \` out of the PTY stream, across read boundaries; other output, including other APCs, passes through. Handles chunked transfers (`m=1`), `a=t/T/p/q/d`, formats 24/32/100 (PNG), zlib (`o=z`), direct, file and temporary-file media (`t=d/f/t`; shared memory is refused), image ids and numbers (`i`/`I`), placement ids (`p`), source rectangles, cell offsets, `c`/`r` with aspect ratio, `C=1`, `z`, and quiet modes. Replies follow kitty's rules. Decoded data is capped at 320 MB (oldest images dropped first), a command at 400 MB, an image at 100 Mpx.
+- **Anchoring:** for each displayed image, the filter injects one marker cell per image row into the parser's input: a blank cell with an OSC 8 hyperlink `lohtty-kitty:<placement>:<row>` at the image's left column, then moves the cursor as kitty does (after the image on its last row; `C=1` saves and restores it without scrolling). Markers scroll, get cleared and leave scrollback with the text, so the renderer simply draws each placement where its markers are visible, clipped to the visible rows. Trade-off: the first cell of each image row is overwritten with a blank, and text later written over a marker hides that image row.
+- **Rendering:** markers are skipped as links (no underline, not clickable). Images are converted once per (image, source rectangle) to gpui BGRA textures, drawn above text (`z ≥ 0`) or below it (`z < 0`), and released when they leave the screen.
+- **Files:** only regular local files are read. Device, pipe (`\\.\…`) and network paths are refused, since opening them could block the PTY reader. Temporary files are deleted only if their path contains `tty-graphics-protocol` and is in the temp directory.
+- **Not done:** deletes by cell or cursor position (`d=c/p/x/y/r`), animation (`a=f/a/c`), Unicode placeholders (`U=1`), shared memory. Real clients (`kitty icat` in WSL, `timg`, `yazi`) aren't installed on the dev machine yet; checked with a PowerShell sender (chunked PNG, display, partial scroll-off, scrollback, `cls`) and a query script.
+
 ---
 
 ## 6. Risks & open questions

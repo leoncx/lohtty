@@ -193,7 +193,7 @@ impl Workspace {
 
     /// Starts a shell in a new terminal view, or records the error.
     fn new_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Pane> {
-        let (session, events) = match spawn_session(&self.config) {
+        let spawned = match spawn_session(&self.config) {
             Ok(spawned) => spawned,
             Err(e) => {
                 tracing::error!("failed to start shell: {e:#}");
@@ -203,7 +203,7 @@ impl Workspace {
             }
         };
         let (config, theme) = (&self.config, self.theme.clone());
-        let pane = cx.new(|cx| TerminalView::new(session, events, config, theme, window, cx));
+        let pane = cx.new(|cx| TerminalView::new(spawned, config, theme, window, cx));
         let subscription = cx.subscribe_in(&pane, window, Self::on_terminal_event);
         self.pane_subscriptions
             .insert(pane.entity_id(), subscription);

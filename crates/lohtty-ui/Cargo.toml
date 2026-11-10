@@ -13,6 +13,11 @@ alacritty_terminal = "0.26"
 async-channel = "2.5"
 anyhow.workspace = true
 tracing.workspace = true
+image = { version = "0.25", default-features = false, optional = true }
+
+[features]
+# Kitty graphics protocol: images drawn in the terminal.
+kitty-graphics = ["lohtty-term/kitty-graphics", "dep:image"]
 
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"

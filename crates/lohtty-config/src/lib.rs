@@ -31,6 +31,7 @@ pub struct Config {
     pub window: WindowConfig,
     pub theme: String,
     pub scrollback: usize,
+    pub graphics: GraphicsConfig,
 }
 
 impl Default for Config {
@@ -41,7 +42,22 @@ impl Default for Config {
             window: WindowConfig::default(),
             theme: "tokyo-night".into(),
             scrollback: 10_000,
+            graphics: GraphicsConfig::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct GraphicsConfig {
+    /// Kitty graphics protocol (images), in builds that include it. Applies
+    /// to tabs and panes opened afterwards.
+    pub kitty: bool,
+}
+
+impl Default for GraphicsConfig {
+    fn default() -> Self {
+        Self { kitty: true }
     }
 }
 

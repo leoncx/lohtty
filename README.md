@@ -12,6 +12,8 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 - Mouse selection, clipboard, bracketed paste
 - Mouse reporting for terminal apps
 - OSC 8 hyperlinks
+- Images through the kitty graphics protocol (PNG, RGB/RGBA; direct, file and
+  temporary-file transfer)
 - PowerShell by default, any shell configurable
 
 ## Install
@@ -23,6 +25,7 @@ releases page, unzip it and run `lohtty.exe`.
 
 ```powershell
 cargo build --release          # target\release\lohtty.exe
+cargo build --release --no-default-features  # without kitty graphics
 pwsh -File scripts/package.ps1 # dist\lohtty-<version>-windows-x64.zip
 ```
 
@@ -61,6 +64,9 @@ blur = true
 padding = 8
 width = 1000
 height = 650
+
+[graphics]
+kitty = true               # kitty graphics protocol (new tabs and panes)
 ```
 
 ### Themes
@@ -115,6 +121,11 @@ Mouse:
   your environment. lohtty passes the environment through unchanged.
 - **Prompt icons show as boxes.** Install a Nerd Font (for example
   *Symbols Nerd Font Mono*) or list one in `font.fallbacks`.
+- **Images don't show.** Programs detect kitty graphics by sending a query,
+  which lohtty answers unless `graphics.kitty = false`. Images need a Windows
+  ConPTY that passes the protocol's escape sequences through (verified on
+  Windows 11 build 26300). Animation and Unicode placeholders (`U=1`) aren't
+  supported yet.
 - **Logs.** Set `LOHTTY_LOG=debug` (or `lohtty_term::pty=trace` for raw
   shell output) and start lohtty from another terminal. Logs go to stderr.
 
