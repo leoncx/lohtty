@@ -296,7 +296,19 @@ Each milestone ends with a runnable build.
   - **Startup:** about 190 ms of NVIDIA driver signature checks (`nvldumdx.dll` → wintrust) when gpui creates the D3D device. This happens once and isn't lohtty code.
   - **Flood:** about 185 ms of CPU per second (18.5% of a core). Of that, `FramePainter::prepaint` takes ~107 ms/s, 95% of which is `shape_line`, i.e. DirectWrite and TextShaping plus their heap allocations. lohtty's own grid walk is 2% of `prepaint`. gpui glyph painting (`paint_glyph`, `raster_bounds`, atlas lookups) is about 7% of the thread.
   - **Idle:** about 17 ms/s (1.7%), mostly kernel time in `NtUserGetMessage` while gpui's Windows run loop wakes for its frame timer. That's gpui behaviour.
-  - **Next lever if needed:** a fast path that skips DirectWrite shaping for rows without ligature candidates (cache glyph ids per character and font, then `paint_glyph` at cell positions). This is a sizeable change and isn't scheduled.
+  - **Shaping fast path** (done, see below) removed most of the flood cost.
+- **Shaping fast path:** most cells are no longer shaped by DirectWrite. `FramePainter::layout_segment` paints each cell's glyph straight at its grid position (`Window::paint_glyph`, or `paint_emoji`), using glyph ids cached per (font, character) in a thread-local table. A character's glyph is found once by shaping it alone, which also resolves font fallback (icons, CJK, symbols).
+  - **Still shaped:** runs of two or more ASCII punctuation characters when ligatures are on (`->`, `::`, `!=`, `/*`...). These spans keep their runs' colors and fonts, so a ligature can still form across a color change. They're short and repeat, so gpui's line-layout cache usually has them. Segments with combining marks, underline or strikethrough are still shaped whole.
+  - **Layer:** all cell glyphs are painted inside one `paint_layer`. Without it, gpui's scene computes a draw order per glyph, which made painting cost more than the shaping it replaced (1.37 ms vs 0.45 ms per frame).
+  - **Baseline:** taken from a shaped reference glyph of the regular font, so cells line up with shaped spans.
+  - **Side effect:** italic text now renders with the italic face. When a whole row was shaped as one line, DirectWrite drew the italic runs upright. Decorated segments still go through whole-row shaping and keep that quirk.
+  - **Limit:** contextual alternates involving letters or digits (e.g. Fira Code's `0xFF` or a centered `:` in `12:30`) aren't applied, since those characters are painted individually.
+  - **Measured** (release, 21 MB / 200k log lines through `cmd /c type`, two runs each; this machine was slower than the earlier table):
+
+    | | Shape ms/frame | Paint ms/frame | lohtty frame work | Process CPU during the flood |
+    |---|---|---|---|---|
+    | Before | 4.29 | 0.46 | 33% of a core | 6.3 s |
+    | Fast path | 0.30 | 0.44 | 7% | 3.4 s |
   - **Symbolizing:** samply showed placeholder names (`fun_*`) for `lohtty.exe`. Symbolize the profile's addresses against `target/profiling/lohtty.pdb` with dbghelp (`SymFromAddrW`, without `SYMOPT_DEFERRED_LOADS`).
 - **License:** Apache-2.0, chosen by the owner. The text is in `LICENSE`, it is set in `Cargo.toml`, and it ships in the zip.
 

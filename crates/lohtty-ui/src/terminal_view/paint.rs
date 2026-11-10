@@ -1,6 +1,7 @@
 //! Turns the terminal grid into gpui quads and shaped text.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -9,8 +10,9 @@ use alacritty_terminal::index::{Column, Line, Point as GridPoint};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::CursorShape;
 use gpui::{
-    App, BorderStyle, Bounds, Font, PaintQuad, Pixels, Point, Rgba, ShapedLine, StrikethroughStyle,
-    TextRun, UnderlineStyle, Window, fill, outline, point, px, size,
+    App, BorderStyle, Bounds, Font, FontId, GlyphId, Hsla, PaintQuad, Pixels, Point, Rgba,
+    ShapedLine, StrikethroughStyle, TextRun, UnderlineStyle, Window, WindowTextSystem, fill,
+    outline, point, px, size,
 };
 use lohtty_term::search::{self, Match, RegexSearch};
 use lohtty_term::{Session, TermSize};
@@ -26,6 +28,8 @@ pub(super) struct FramePainter {
     pub theme: Theme,
     /// Regular, bold, italic, bold-italic.
     pub fonts: [Font; 4],
+    /// Whether the fonts request ligatures (`calt`, `liga`).
+    pub ligatures: bool,
     pub metrics: CellMetrics,
     pub focused: bool,
     pub painted: Rc<Cell<PaintState>>,
@@ -54,17 +58,50 @@ struct BgRect {
     color: Rgba,
 }
 
+/// A glyph painted straight at its cell, without shaping its row.
+struct CellGlyph {
+    /// Top-left of the cell.
+    origin: Point<Pixels>,
+    font_id: FontId,
+    id: GlyphId,
+    color: Hsla,
+    emoji: bool,
+}
+
+/// The glyph a character renders as, alone, in a given font (possibly a
+/// fallback font). `None` when it takes several glyphs.
+type CachedGlyph = Option<(FontId, GlyphId, bool)>;
+
+thread_local! {
+    /// Glyph lookups by (requested font, character). Glyph ids don't depend on
+    /// the font size, so this survives zooming; it's only bounded in size.
+    static GLYPHS: RefCell<HashMap<(FontId, char), CachedGlyph>> = RefCell::new(HashMap::new());
+}
+
+/// Characters that can take part in a ligature or contextual alternate
+/// (`->`, `!=`, `::`, `/*`...). Runs of two or more are shaped by DirectWrite;
+/// everything else is painted glyph by glyph.
+fn ligature_candidate(c: char) -> bool {
+    c.is_ascii_punctuation()
+}
+
 pub(super) struct Frame {
     rects: Vec<PaintQuad>,
     cursor_below: Option<PaintQuad>,
     lines: Vec<(Point<Pixels>, ShapedLine)>,
+    glyphs: Vec<CellGlyph>,
+    /// Distance from the top of a cell to the text baseline.
+    baseline: Pixels,
+    font_size: Pixels,
+    /// The terminal's bounds; `glyphs` are painted as one layer within them.
+    bounds: Bounds<Pixels>,
     cursor_above: Option<PaintQuad>,
     composition: Option<(PaintQuad, Point<Pixels>, ShapedLine)>,
     line_height: Pixels,
 }
 
 impl FramePainter {
-    pub fn prepaint(self, bounds: Bounds<Pixels>, window: &mut Window) -> Frame {
+    pub fn prepaint(mut self, bounds: Bounds<Pixels>, window: &mut Window) -> Frame {
         let started = Instant::now();
         let m = self.metrics;
         let cols = ((bounds.size.width / m.cell_width) as usize).clamp(2, u16::MAX as usize);
@@ -103,7 +140,7 @@ impl FramePainter {
             let term = self.session.term().lock();
 
             // Search matches intersecting the viewport.
-            let (visible_matches, current_match) = match self.search {
+            let (visible_matches, current_match) = match self.search.take() {
                 Some((mut regex, current)) => {
                     let top = -(term.grid().display_offset() as i32);
                     let first = GridPoint::new(Line(top), Column(0));
@@ -363,18 +400,21 @@ impl FramePainter {
         let shape_start = Instant::now();
         let segment_count = segments.len();
         let text_system = window.text_system().clone();
-        let lines = segments
-            .into_iter()
-            .map(|s| {
-                let origin = cell_bounds(s.row, s.col, s.cells).origin;
-                // Pin each glyph to its cell, so fallback glyphs (icons, symbols)
-                // with a different advance can't push the rest of the line off-grid.
-                let force_width = s.snap.then_some(m.cell_width);
-                let shaped =
-                    text_system.shape_line(s.text.into(), m.font_size, &s.runs, force_width);
-                (origin, shaped)
-            })
-            .collect();
+        let mut lines = Vec::new();
+        let mut glyphs = Vec::new();
+        for s in segments {
+            let origin = cell_bounds(s.row, s.col, s.cells).origin;
+            self.layout_segment(s, origin, &text_system, &mut lines, &mut glyphs);
+        }
+        // The baseline of the regular font, as a shaped line would place it.
+        let reference = text_system.shape_line(
+            "M".into(),
+            m.font_size,
+            &[plain_run(1, &self.fonts[0], Hsla::default())],
+            None,
+        );
+        let baseline =
+            (m.line_height - reference.ascent - reference.descent) / 2. + reference.ascent;
         perf::record_prepaint(perf::FrameTimings {
             grid: grid_time,
             shape: shape_start.elapsed(),
@@ -411,11 +451,163 @@ impl FramePainter {
             rects,
             cursor_below,
             lines,
+            glyphs,
+            baseline,
+            font_size: m.font_size,
+            bounds,
             cursor_above,
             composition,
             line_height: m.line_height,
         }
     }
+}
+
+impl FramePainter {
+    /// Lays out one segment. Shaping a whole row through DirectWrite is the
+    /// main cost while output streams, so plain cells are painted straight
+    /// from cached glyph ids, snapped to the grid like `force_width` does.
+    /// Only spans that can form ligatures, and segments that need the full
+    /// layout (combining marks, underline or strikethrough), are shaped.
+    fn layout_segment(
+        &self,
+        s: Segment,
+        origin: Point<Pixels>,
+        text_system: &WindowTextSystem,
+        lines: &mut Vec<(Point<Pixels>, ShapedLine)>,
+        glyphs: &mut Vec<CellGlyph>,
+    ) {
+        let m = self.metrics;
+        let decorated = s
+            .runs
+            .iter()
+            .any(|r| r.underline.is_some() || r.strikethrough.is_some());
+        if !s.snap || decorated {
+            // Pin each glyph to its cell, so fallback glyphs (icons, symbols)
+            // with a different advance can't push the rest of the line off-grid.
+            let force_width = s.snap.then_some(m.cell_width);
+            let shaped = text_system.shape_line(s.text.into(), m.font_size, &s.runs, force_width);
+            lines.push((origin, shaped));
+            return;
+        }
+
+        let cell_origin = |cell: usize| point(origin.x + m.cell_width * cell as f32, origin.y);
+        // (byte offset, char, run index) for every character. Every character
+        // is one cell here: wide characters are segments of their own, and
+        // combining marks were excluded above.
+        let mut chars = Vec::with_capacity(s.text.len());
+        let mut start = 0;
+        for (r, run) in s.runs.iter().enumerate() {
+            chars.extend(
+                s.text[start..start + run.len]
+                    .char_indices()
+                    .map(|(i, c)| (start + i, c, r)),
+            );
+            start += run.len;
+        }
+        let byte_end = |k: usize| chars.get(k).map_or(s.text.len(), |&(i, _, _)| i);
+        // Shapes cells `from..to`, keeping the colors and fonts of their runs
+        // (a ligature may span a color change, as in a whole-row layout).
+        let shape_span = |from: usize, to: usize, lines: &mut Vec<_>| {
+            let mut runs: Vec<TextRun> = Vec::new();
+            for k in from..to {
+                let len = byte_end(k + 1) - byte_end(k);
+                let run = &s.runs[chars[k].2];
+                match runs.last_mut() {
+                    Some(last) if k > from && chars[k - 1].2 == chars[k].2 => last.len += len,
+                    _ => runs.push(plain_run(len, &run.font, run.color)),
+                }
+            }
+            let text = &s.text[byte_end(from)..byte_end(to)];
+            let shaped = text_system.shape_line(
+                text.to_owned().into(),
+                m.font_size,
+                &runs,
+                Some(m.cell_width),
+            );
+            lines.push((cell_origin(from), shaped));
+        };
+
+        let font_ids: Vec<FontId> = s
+            .runs
+            .iter()
+            .map(|r| text_system.resolve_font(&r.font))
+            .collect();
+        let mut k = 0;
+        while k < chars.len() {
+            let (_, c, r) = chars[k];
+            if c == ' ' {
+                k += 1;
+                continue;
+            }
+            if self.ligatures && ligature_candidate(c) {
+                let end = (k + 1..chars.len())
+                    .find(|&j| !ligature_candidate(chars[j].1))
+                    .unwrap_or(chars.len());
+                if end - k >= 2 {
+                    shape_span(k, end, lines);
+                    k = end;
+                    continue;
+                }
+            }
+            let run = &s.runs[r];
+            match glyph_for(text_system, font_ids[r], &run.font, c, m.font_size) {
+                Some((font_id, id, emoji)) => glyphs.push(CellGlyph {
+                    origin: cell_origin(k),
+                    font_id,
+                    id,
+                    color: run.color,
+                    emoji,
+                }),
+                None => shape_span(k, k + 1, lines),
+            }
+            k += 1;
+        }
+    }
+}
+
+fn plain_run(len: usize, font: &Font, color: Hsla) -> TextRun {
+    TextRun {
+        len,
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    }
+}
+
+/// The single glyph `c` renders as in `font`, found once by shaping it alone.
+fn glyph_for(
+    text_system: &WindowTextSystem,
+    font_id: FontId,
+    font: &Font,
+    c: char,
+    font_size: Pixels,
+) -> CachedGlyph {
+    GLYPHS.with_borrow_mut(|cache| {
+        if let Some(&found) = cache.get(&(font_id, c)) {
+            return found;
+        }
+        if cache.len() >= 1 << 16 {
+            cache.clear();
+        }
+        let text = c.to_string();
+        let shaped = text_system.shape_line(
+            text.clone().into(),
+            font_size,
+            &[plain_run(text.len(), font, Hsla::default())],
+            None,
+        );
+        let found = match shaped.runs.as_slice() {
+            [run] => match run.glyphs.as_slice() {
+                [g] => Some((run.font_id, g.id, g.is_emoji)),
+                _ => None,
+            },
+            _ => None,
+        };
+        cache.insert((font_id, c), found);
+        found
+    })
 }
 
 impl Frame {
@@ -435,6 +627,18 @@ impl Frame {
         for (origin, line) in &self.lines {
             let _ = line.paint(*origin, self.line_height, window, cx);
         }
+        // One layer for all glyphs: outside a layer, gpui's scene computes a
+        // draw order per primitive, which costs more than painting them.
+        window.paint_layer(self.bounds, |window| {
+            for g in &self.glyphs {
+                let at = point(g.origin.x, g.origin.y + self.baseline);
+                let _ = if g.emoji {
+                    window.paint_emoji(at, g.font_id, g.id, self.font_size)
+                } else {
+                    window.paint_glyph(at, g.font_id, g.id, self.font_size, g.color)
+                };
+            }
+        });
         if let Some(c) = self.cursor_above {
             window.paint_quad(c);
         }

@@ -412,6 +412,7 @@ impl Render for TerminalView {
             session: self.session.clone(),
             theme: self.theme.clone(),
             fonts,
+            ligatures: self.font.ligatures,
             metrics,
             focused: self.focus.is_focused(window),
             painted: self.painted.clone(),
