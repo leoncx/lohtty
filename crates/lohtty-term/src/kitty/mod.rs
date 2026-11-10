@@ -16,6 +16,7 @@
 
 mod command;
 mod decode;
+pub mod placeholder;
 
 use std::collections::{HashMap, VecDeque};
 use std::io::Write as _;
@@ -78,6 +79,9 @@ struct State {
     placements: HashMap<u64, Placement>,
     /// (image id, placement id) → placement serial, for replacement.
     keyed: HashMap<(u32, u32), u64>,
+    /// Virtual placements (`U=1`), shown through Unicode placeholders:
+    /// (image id, placement id) → size and source.
+    virtual_placements: HashMap<(u32, u32), Placement>,
     next_serial: u64,
     next_image_id: u32,
     /// Cell size in pixels, as reported to the client.
@@ -133,8 +137,31 @@ impl Graphics {
         Some((p.clone(), image.clone()))
     }
 
+    /// The virtual placement a placeholder cell refers to: by placement id,
+    /// or the image's lowest-numbered one when the cell gives none (0).
+    pub fn virtual_placement(
+        &self,
+        image_id: u32,
+        placement_id: u32,
+    ) -> Option<(Placement, Image)> {
+        let state = self.state.lock().unwrap();
+        let p = if placement_id != 0 {
+            state.virtual_placements.get(&(image_id, placement_id))?
+        } else {
+            state
+                .virtual_placements
+                .iter()
+                .filter(|((image, _), _)| *image == image_id)
+                .min_by_key(|((_, placement), _)| *placement)?
+                .1
+        };
+        let image = state.images.get(&image_id)?;
+        Some((p.clone(), image.clone()))
+    }
+
     pub fn is_empty(&self) -> bool {
-        self.state.lock().unwrap().placements.is_empty()
+        let state = self.state.lock().unwrap();
+        state.placements.is_empty() && state.virtual_placements.is_empty()
     }
 }
 
@@ -403,60 +430,19 @@ impl KittyFilter {
 
     /// Creates a placement and writes its row markers into `out`.
     fn place(&mut self, cmd: &Command, image_id: u32, out: &mut Vec<u8>) {
+        let mut state = self.graphics.state.lock().unwrap();
+        let Some(placement) = placement_for(&state, cmd, image_id) else {
+            return;
+        };
         if cmd.virtual_placement {
-            // Unicode placeholders aren't supported; nothing is drawn.
+            // Shown wherever the client prints placeholders for it: no
+            // markers, and the cursor doesn't move.
+            state
+                .virtual_placements
+                .insert((image_id, cmd.placement), placement);
             return;
         }
-        let mut state = self.graphics.state.lock().unwrap();
-        let Some(image) = state.images.get(&image_id) else {
-            return;
-        };
-        let (iw, ih) = (image.width, image.height);
-        let src_x = cmd.x.min(iw);
-        let src_y = cmd.y.min(ih);
-        let src_w = if cmd.w == 0 {
-            iw - src_x
-        } else {
-            cmd.w.min(iw - src_x)
-        };
-        let src_h = if cmd.h == 0 {
-            ih - src_y
-        } else {
-            cmd.h.min(ih - src_y)
-        };
-        let (cw, ch) = state.cell;
-        let (offset_x, offset_y) = (cmd.offset_x.min(cw - 1), cmd.offset_y.min(ch - 1));
-        // Display size in pixels: the source size unless cells are given, in
-        // which case a single given dimension keeps the aspect ratio.
-        let (cols, rows) = match (cmd.cols, cmd.rows) {
-            (0, 0) => (
-                (src_w + offset_x).div_ceil(cw),
-                (src_h + offset_y).div_ceil(ch),
-            ),
-            (c, 0) => {
-                let height = (c * cw) as u64 * src_h as u64 / src_w.max(1) as u64;
-                (c, (height as u32).div_ceil(ch))
-            }
-            (0, r) => {
-                let width = (r * ch) as u64 * src_w as u64 / src_h.max(1) as u64;
-                ((width as u32).div_ceil(cw), r)
-            }
-            (c, r) => (c, r),
-        };
-        let (cols, rows) = (cols.clamp(1, 1000), rows.clamp(1, 1000));
-        let placement = Placement {
-            image_id,
-            cols,
-            rows,
-            src_x,
-            src_y,
-            src_w,
-            src_h,
-            offset_x,
-            offset_y,
-            fit_cells: cmd.cols != 0 || cmd.rows != 0,
-            z: cmd.z,
-        };
+        let (cols, rows) = (placement.cols, placement.rows);
         state.next_serial += 1;
         let serial = state.next_serial;
         if cmd.placement != 0
@@ -508,8 +494,32 @@ impl KittyFilter {
             // apply.
             _ => Vec::new(),
         };
+        // Virtual placements go with the same selections (they have no
+        // position, so positional deletes leave them).
+        let number_id = state.numbers.get(&cmd.number).copied();
+        let doomed_virtual: Vec<(u32, u32)> = state
+            .virtual_placements
+            .iter()
+            .filter(
+                |((image, placement), p)| match cmd.delete.to_ascii_lowercase() {
+                    b'a' => true,
+                    b'i' | b'n' => {
+                        let id = if cmd.delete.eq_ignore_ascii_case(&b'i') {
+                            Some(cmd.id)
+                        } else {
+                            number_id
+                        };
+                        Some(*image) == id && (cmd.placement == 0 || *placement == cmd.placement)
+                    }
+                    b'z' => p.z == cmd.z,
+                    b'r' => (cmd.x..=cmd.y).contains(image),
+                    _ => false,
+                },
+            )
+            .map(|(key, _)| *key)
+            .collect();
         drop(state);
-        self.remove_placements(doomed, cmd.delete);
+        self.remove_placements(doomed, doomed_virtual, cmd.delete);
     }
 
     /// Deletes the placements on screen that cover a cell (`p`, `q` with a
@@ -547,18 +557,24 @@ impl KittyFilter {
             .map(|(serial, _)| serial)
             .collect();
         drop(state);
-        self.remove_placements(doomed, cmd.delete);
+        self.remove_placements(doomed, Vec::new(), cmd.delete);
     }
 
-    /// Removes placements; an upper-case `delete` also frees the images left
-    /// without placements.
-    fn remove_placements(&mut self, doomed: Vec<u64>, delete: u8) {
+    /// Removes placements (by serial) and virtual placements (by image and
+    /// placement id); an upper-case `delete` also frees the images left
+    /// without any placement.
+    fn remove_placements(&mut self, doomed: Vec<u64>, doomed_virtual: Vec<(u32, u32)>, delete: u8) {
         let mut state = self.graphics.state.lock().unwrap();
         let free = delete.is_ascii_uppercase();
         let mut touched = Vec::new();
         for serial in doomed {
             if let Some(p) = state.placements.remove(&serial) {
                 touched.push(p.image_id);
+            }
+        }
+        for key in doomed_virtual {
+            if state.virtual_placements.remove(&key).is_some() {
+                touched.push(key.0);
             }
         }
         let State {
@@ -571,12 +587,68 @@ impl KittyFilter {
                 touched = state.images.keys().copied().collect();
             }
             for id in touched {
-                if !state.placements.values().any(|p| p.image_id == id) {
+                let placed = state.placements.values().any(|p| p.image_id == id)
+                    || state
+                        .virtual_placements
+                        .keys()
+                        .any(|(image, _)| *image == id);
+                if !placed {
                     remove_image(&mut state, id);
                 }
             }
         }
     }
+}
+
+/// The size and source rectangle a placement command asks for.
+fn placement_for(state: &State, cmd: &Command, image_id: u32) -> Option<Placement> {
+    let image = state.images.get(&image_id)?;
+    let (iw, ih) = (image.width, image.height);
+    let src_x = cmd.x.min(iw);
+    let src_y = cmd.y.min(ih);
+    let src_w = if cmd.w == 0 {
+        iw - src_x
+    } else {
+        cmd.w.min(iw - src_x)
+    };
+    let src_h = if cmd.h == 0 {
+        ih - src_y
+    } else {
+        cmd.h.min(ih - src_y)
+    };
+    let (cw, ch) = state.cell;
+    let (offset_x, offset_y) = (cmd.offset_x.min(cw - 1), cmd.offset_y.min(ch - 1));
+    // Display size in pixels: the source size unless cells are given, in
+    // which case a single given dimension keeps the aspect ratio.
+    let (cols, rows) = match (cmd.cols, cmd.rows) {
+        (0, 0) => (
+            (src_w + offset_x).div_ceil(cw),
+            (src_h + offset_y).div_ceil(ch),
+        ),
+        (c, 0) => {
+            let height = (c * cw) as u64 * src_h as u64 / src_w.max(1) as u64;
+            (c, (height as u32).div_ceil(ch))
+        }
+        (0, r) => {
+            let width = (r * ch) as u64 * src_w as u64 / src_h.max(1) as u64;
+            ((width as u32).div_ceil(cw), r)
+        }
+        (c, r) => (c, r),
+    };
+    let (cols, rows) = (cols.clamp(1, 1000), rows.clamp(1, 1000));
+    Some(Placement {
+        image_id,
+        cols,
+        rows,
+        src_x,
+        src_y,
+        src_w,
+        src_h,
+        offset_x,
+        offset_y,
+        fit_cells: cmd.cols != 0 || cmd.rows != 0,
+        z: cmd.z,
+    })
 }
 
 fn remove_image(state: &mut State, id: u32) {
@@ -585,6 +657,9 @@ fn remove_image(state: &mut State, id: u32) {
         state.order.retain(|&i| i != id);
         state.placements.retain(|_, p| p.image_id != id);
         state.keyed.retain(|(image, _), _| *image != id);
+        state
+            .virtual_placements
+            .retain(|(image, _), _| *image != id);
     }
 }
 

@@ -155,6 +155,12 @@ impl FramePainter {
 
         #[cfg(feature = "kitty-graphics")]
         let mut markers = Vec::new();
+        // Unicode placeholder cells (kitty `U=1`), and the last one seen, for
+        // values its right neighbor inherits.
+        #[cfg(feature = "kitty-graphics")]
+        let mut placeholders = Vec::new();
+        #[cfg(feature = "kitty-graphics")]
+        let mut last_placeholder: Option<super::images::PlaceholderAt> = None;
         {
             let term = self.session.term().lock();
 
@@ -268,6 +274,19 @@ impl FramePainter {
                     markers.extend(marker);
                     !is_marker
                 });
+                // Unicode placeholders: the image is drawn there, not the text.
+                #[cfg(feature = "kitty-graphics")]
+                if self.images.is_some() && cell.c == super::images::PLACEHOLDER {
+                    let left = last_placeholder
+                        .filter(|at| at.row == row && at.col + 1 == col)
+                        .map(|at| at.cell);
+                    let at = super::images::placeholder(cell, row, col, left);
+                    last_placeholder = Some(at);
+                    placeholders.push(at);
+                    segments.extend(seg.take());
+                    pending_spaces = 0;
+                    continue;
+                }
                 let hyperlink = link.is_some();
                 let underlined = flags.intersects(Flags::ALL_UNDERLINES) || hyperlink;
                 let decorated = underlined || flags.contains(Flags::STRIKEOUT);
@@ -436,7 +455,7 @@ impl FramePainter {
         let images = self
             .images
             .as_ref()
-            .map(|layer| layer.layout(markers, bounds, m))
+            .map(|layer| layer.layout(markers, placeholders, bounds, m))
             .unwrap_or_default();
 
         self.painted.set(PaintState {

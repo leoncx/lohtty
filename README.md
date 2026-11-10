@@ -188,8 +188,19 @@ Mouse:
 - **Images don't show.** Programs detect kitty graphics by sending a query,
   which lohtty answers unless `graphics.kitty = false`. Images need a Windows
   ConPTY that passes the protocol's escape sequences through (verified on
-  Windows 11 build 26300). Animation and Unicode placeholders (`U=1`) aren't
-  supported yet.
+  Windows 11 build 26300). Animation isn't supported yet.
+- **Images in tmux.** Programs such as `kitty icat` draw images through
+  Unicode placeholders inside tmux. tmux must pass the graphics commands
+  through and keep 24-bit colors (the image id travels in the text color):
+
+  ```
+  set -g allow-passthrough on
+  set -as terminal-features ",xterm-256color:RGB"
+  ```
+
+  Programs that wait for the terminal's reply to decide (yazi) don't get it
+  through tmux, and don't recognize lohtty by name, so they show no images
+  there.
 - **Black or missing window on Linux.** lohtty draws with Vulkan: check that
   a Vulkan driver is installed (`vulkaninfo --summary`, from `vulkan-tools`).
   Mesa's software renderer in Ubuntu 22.04 shows a black window under Xvfb;

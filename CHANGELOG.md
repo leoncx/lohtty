@@ -24,7 +24,8 @@ version and changelog section, and uses that section as the release notes.
 - Mouse selection, clipboard, bracketed paste, mouse reporting, OSC 8 links.
 - Kitty graphics protocol: PNG and raw images, anchored to scrollback. Works
   with `kitty icat`, timg, chafa and yazi. Images can be deleted by id,
-  number, z-index, id range, cell, cursor, column or row.
+  number, z-index, id range, cell, cursor, column or row. Unicode placeholders
+  (`U=1`) show images through text, so `kitty icat` works inside tmux.
 - Box-drawing, block and Powerline characters drawn by lohtty, so lines,
   blocks and prompt segments join across cells with any font.
 - Fast rendering of streaming output, and keystroke-to-screen latency on par

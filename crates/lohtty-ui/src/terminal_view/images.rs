@@ -1,5 +1,6 @@
 //! Draws kitty graphics placements at their marker cells (see
-//! `lohtty_term::kitty` for how markers anchor images to the grid).
+//! `lohtty_term::kitty` for how markers anchor images to the grid), and
+//! virtual placements in their Unicode placeholder cells.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -7,7 +8,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{Bounds, ContentMask, Pixels, RenderImage, Window, point, px, size};
-use lohtty_term::kitty::{Graphics, Image, parse_marker};
+use lohtty_term::alacritty_terminal::term::cell::Cell;
+use lohtty_term::alacritty_terminal::vte::ansi::Color;
+use lohtty_term::kitty::placeholder::{self, PlaceholderCell};
+use lohtty_term::kitty::{Graphics, Image, Placement, parse_marker};
+
+pub(super) use lohtty_term::kitty::placeholder::PLACEHOLDER;
 
 use super::CellMetrics;
 
@@ -28,6 +34,44 @@ pub(super) fn marker(uri: &str, row: usize, col: usize) -> Option<Marker> {
         row,
         col,
     })
+}
+
+/// A Unicode placeholder cell on screen, decoded.
+#[derive(Clone, Copy)]
+pub(super) struct PlaceholderAt {
+    pub row: usize,
+    pub col: usize,
+    pub cell: PlaceholderCell,
+}
+
+/// Decodes a placeholder cell at (row, col); `left` is the placeholder just
+/// left of it, for inherited values.
+pub(super) fn placeholder(
+    cell: &Cell,
+    row: usize,
+    col: usize,
+    left: Option<PlaceholderCell>,
+) -> PlaceholderAt {
+    let marks = cell.zerowidth().unwrap_or(&[]);
+    let underline = cell.underline_color().map_or(0, color_id);
+    PlaceholderAt {
+        row,
+        col,
+        cell: placeholder::decode(color_id(cell.fg), underline, marks, left),
+    }
+}
+
+/// The id a placeholder color encodes: the 24-bit value, or the 256-color
+/// index (the first 16 may come as named colors).
+fn color_id(color: Color) -> u32 {
+    match color {
+        Color::Spec(rgb) => (rgb.r as u32) << 16 | (rgb.g as u32) << 8 | rgb.b as u32,
+        Color::Indexed(i) => i as u32,
+        Color::Named(named) => {
+            let i = named as u32;
+            if i < 16 { i } else { 0 }
+        }
+    }
 }
 
 /// Images converted for gpui, kept while they stay on screen.
@@ -72,6 +116,7 @@ impl ImageLayer {
     pub fn layout(
         &self,
         markers: Vec<Marker>,
+        placeholders: Vec<PlaceholderAt>,
         bounds: Bounds<Pixels>,
         m: CellMetrics,
     ) -> ImageFrame {
@@ -157,6 +202,82 @@ impl ImageLayer {
                 ),
             )
             .intersect(&bounds);
+            draws.push(ImageDraw {
+                image: texture,
+                bounds: whole,
+                clip,
+                below_text: p.z < 0,
+            });
+        }
+
+        // Placeholder cells: runs of consecutive cells of one placement on a
+        // row are drawn together.
+        let mut runs: Vec<(PlaceholderAt, usize)> = Vec::new();
+        for at in placeholders {
+            match runs.last_mut() {
+                Some((first, len))
+                    if first.row == at.row
+                        && first.col + *len == at.col
+                        && first.cell.image_id == at.cell.image_id
+                        && first.cell.placement_id == at.cell.placement_id
+                        && first.cell.row == at.cell.row
+                        && first.cell.col + *len as u32 == at.cell.col =>
+                {
+                    *len += 1
+                }
+                _ => runs.push((at, 1)),
+            }
+        }
+        let mut virtuals: HashMap<(u32, u32), Option<(Placement, Image)>> = HashMap::new();
+        for (first, len) in runs {
+            let key = (first.cell.image_id, first.cell.placement_id);
+            let found = virtuals
+                .entry(key)
+                .or_insert_with(|| self.graphics.virtual_placement(key.0, key.1));
+            let Some((p, image)) = found else {
+                continue;
+            };
+            if p.src_w == 0 || p.src_h == 0 {
+                continue;
+            }
+            let Some(texture) = cache.texture(image, frame_no) else {
+                continue;
+            };
+            // The placement's grid of cells, placed so that the run's first
+            // cell is the image cell it names.
+            let grid_origin = point(
+                bounds.origin.x + m.cell_width * (first.col as f32 - first.cell.col as f32),
+                bounds.origin.y + m.line_height * (first.row as f32 - first.cell.row as f32),
+            );
+            let grid = size(m.cell_width * p.cols as f32, m.line_height * p.rows as f32);
+            // The source fits the grid, keeping its aspect ratio, centered.
+            let scale = (f32::from(grid.width) / p.src_w as f32)
+                .min(f32::from(grid.height) / p.src_h as f32);
+            let shown = size(px(p.src_w as f32 * scale), px(p.src_h as f32 * scale));
+            let dest_origin = point(
+                grid_origin.x + (grid.width - shown.width) / 2.,
+                grid_origin.y + (grid.height - shown.height) / 2.,
+            );
+            let whole = Bounds::new(
+                point(
+                    dest_origin.x - px(p.src_x as f32 * scale),
+                    dest_origin.y - px(p.src_y as f32 * scale),
+                ),
+                size(
+                    px(image.width as f32 * scale),
+                    px(image.height as f32 * scale),
+                ),
+            );
+            let run = Bounds::new(
+                point(
+                    bounds.origin.x + m.cell_width * first.col as f32,
+                    bounds.origin.y + m.line_height * first.row as f32,
+                ),
+                size(m.cell_width * len as f32, m.line_height),
+            );
+            let clip = run
+                .intersect(&Bounds::new(dest_origin, shown))
+                .intersect(&bounds);
             draws.push(ImageDraw {
                 image: texture,
                 bounds: whole,

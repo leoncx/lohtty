@@ -442,3 +442,48 @@ fn delete_by_id_range() {
     s.feed(b"\x1b_Ga=d,d=R,x=1,y=1\x1b\\");
     assert!(s.placed().is_empty() && !s.stored(1));
 }
+
+#[test]
+fn virtual_placements_write_no_markers() {
+    let g = Graphics::new();
+    g.set_cell_size(10, 10);
+    let (out, reply) = run(
+        &g,
+        &apc("a=T,i=4,U=1,c=6,r=3,s=30,v=20", &rgba(30, 20)),
+        false,
+    );
+    assert_eq!(reply, b"\x1b_Gi=4;OK\x1b\\");
+    assert!(out.is_empty(), "no markers and no cursor movement");
+    let (p, image) = g.virtual_placement(4, 0).expect("virtual placement");
+    assert_eq!((p.cols, p.rows), (6, 3));
+    assert_eq!((image.width, image.height), (30, 20));
+    // Without c and r the size follows the image, as for normal placements.
+    run(&g, &apc("a=p,i=4,p=9,U=1", &[]), false);
+    let (p, _) = g.virtual_placement(4, 9).unwrap();
+    assert_eq!((p.cols, p.rows), (3, 2));
+    // A cell without a placement id gets the lowest-numbered one.
+    assert_eq!(g.virtual_placement(4, 0).unwrap().0.cols, 6);
+    assert!(g.virtual_placement(5, 0).is_none());
+}
+
+#[test]
+fn deletes_remove_virtual_placements() {
+    let g = Graphics::new();
+    g.set_cell_size(10, 10);
+    run(
+        &g,
+        &apc("a=T,i=4,U=1,c=6,r=3,s=30,v=20", &rgba(30, 20)),
+        false,
+    );
+    run(&g, &apc("a=p,i=4,p=2,U=1,c=2,r=1", &[]), false);
+    run(&g, b"\x1b_Ga=d,d=i,i=4,p=2\x1b\\", false);
+    assert!(g.virtual_placement(4, 2).is_none());
+    assert!(g.virtual_placement(4, 0).is_some());
+    // Positional deletes leave them: they have no position.
+    run(&g, b"\x1b_Ga=d,d=p,x=1,y=1\x1b\\", false);
+    assert!(g.virtual_placement(4, 0).is_some());
+    // Upper-case by id frees the image once no placement is left.
+    run(&g, b"\x1b_Ga=d,d=I,i=4\x1b\\", false);
+    assert!(g.virtual_placement(4, 0).is_none());
+    assert!(!g.state.lock().unwrap().images.contains_key(&4));
+}
