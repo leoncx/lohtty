@@ -15,7 +15,8 @@ use anyhow::Context as _;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use crate::modes::ModeWatcher;
-use crate::notify::{Notification, OscScanner};
+use crate::notify::{Notification, OscEvent, OscScanner};
+use crate::status::{QUERY_REPLY, Shown, StatusBoard};
 use crate::{OutputFilter, ShellSpec};
 
 /// Grid size in cells plus the cell size in pixels (needed by some escape sequences).
@@ -74,6 +75,9 @@ pub enum SessionEvent {
     ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
     /// A program asked for a desktop notification (OSC 9, 777 or 99).
     Notification(Notification),
+    /// The pane's program status records changed (OSC 7501); read them with
+    /// [`Session::status`].
+    StatusChanged,
     /// The shell exited or the PTY closed.
     Exit,
 }
@@ -149,6 +153,8 @@ pub struct Session {
     program: String,
     /// Whether ConPTY asked for win32 input mode (see [`crate::modes`]).
     win32_input: Arc<AtomicBool>,
+    /// Program status records (OSC 7501).
+    status: Arc<Mutex<StatusBoard>>,
 }
 
 impl Session {
@@ -251,6 +257,8 @@ impl Session {
 
         let win32_input = Arc::new(AtomicBool::new(false));
         let reader_win32_input = win32_input.clone();
+        let status = Arc::new(Mutex::new(StatusBoard::default()));
+        let reader_status = status.clone();
         let reader_term = term.clone();
         let reader_pty_tx = pty_tx.clone();
         thread::Builder::new()
@@ -276,11 +284,30 @@ impl Session {
                     if let Some(on) = modes.scan(&buf[..n]) {
                         reader_win32_input.store(on, Ordering::Relaxed);
                     }
-                    for note in found.drain(..) {
-                        let _ = proxy.events.try_send(SessionEvent::Notification(note));
-                    }
                     out.clear();
                     reply.clear();
+                    let mut status_changed = false;
+                    for event in found.drain(..) {
+                        let mut board = reader_status.lock().unwrap();
+                        status_changed |= match event {
+                            OscEvent::Notification(note) => {
+                                let _ = proxy.events.try_send(SessionEvent::Notification(note));
+                                false
+                            }
+                            // Answered before anything is parsed, so the
+                            // reply comes ahead of the DA1 that follows it.
+                            OscEvent::Status(crate::status::Message::Query) => {
+                                reply.extend_from_slice(QUERY_REPLY);
+                                false
+                            }
+                            OscEvent::Status(message) => board.apply(message),
+                            OscEvent::PromptStart => board.prompt(),
+                            OscEvent::Reset => board.reset(),
+                        };
+                    }
+                    if status_changed {
+                        let _ = proxy.events.try_send(SessionEvent::StatusChanged);
+                    }
                     filter.filter(&buf[..n], &mut out, &mut reply);
                     // Filter replies go first, before the parser's own (a
                     // client may wait for its graphics replies, then DA1).
@@ -331,6 +358,7 @@ impl Session {
                 dirty,
                 program: shell.program.clone(),
                 win32_input,
+                status,
             },
             events_rx,
         ))
@@ -339,6 +367,17 @@ impl Session {
     /// The program running in this session, as given to [`Session::spawn`].
     pub fn program(&self) -> &str {
         &self.program
+    }
+
+    /// The program status records to show, most urgent first.
+    pub fn status(&self) -> Vec<Shown> {
+        self.status.lock().unwrap().shown()
+    }
+
+    /// The user saw the pane: finished results stop showing. Returns
+    /// whether anything changed.
+    pub fn status_seen(&self) -> bool {
+        self.status.lock().unwrap().seen()
     }
 
     /// Whether ConPTY asked for win32 input mode: keys can then be sent with

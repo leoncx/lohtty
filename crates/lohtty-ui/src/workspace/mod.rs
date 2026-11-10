@@ -8,11 +8,12 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AppContext, Bounds, Context, Entity, EntityId, Focusable, IsZero, KeyBinding, Pixels,
+    App, AppContext, Bounds, Context, Entity, EntityId, Focusable, IsZero, KeyBinding, Pixels,
     Subscription, Task, Window, actions,
 };
 use lohtty_config::{Config, ConfigWatcher};
 use lohtty_term::notify::Notification;
+use lohtty_term::status::{Kind, Shown, State};
 use lohtty_theme::Theme;
 
 use crate::notifier::{self, Notifier};
@@ -153,6 +154,10 @@ pub struct Workspace {
     /// When each pane last showed a desktop notification, to limit them.
     last_notified: HashMap<EntityId, Instant>,
     notifier: Notifier,
+    /// Frame of the "working" spinner, and the timer advancing it while a
+    /// pane reports work in progress.
+    spinner_frame: usize,
+    spinner: Option<Task<()>>,
     _watcher: Option<ConfigWatcher>,
     _reload: Task<()>,
     _notification_clicks: Task<()>,
@@ -196,13 +201,17 @@ impl Workspace {
                 }
             }
         });
-        // Coming back to the window clears the focused pane's attention.
+        // Coming back to the window clears the focused pane's attention, and
+        // its finished results count as seen.
         let activation = cx.observe_window_activation(window, |this, window, cx| {
             if window.is_window_active()
                 && let Some(tab) = this.tabs.get(this.active_tab)
-                && this.attention.remove(&tab.active.entity_id())
             {
-                cx.notify();
+                let pane = tab.active.clone();
+                if this.attention.remove(&pane.entity_id()) {
+                    cx.notify();
+                }
+                pane.update(cx, |view, cx| view.mark_seen(cx));
             }
         });
 
@@ -219,6 +228,8 @@ impl Workspace {
             attention: HashSet::new(),
             last_notified: HashMap::new(),
             notifier,
+            spinner_frame: 0,
+            spinner: None,
             _watcher: watcher,
             _reload: reload,
             _notification_clicks: notification_clicks,
@@ -272,6 +283,10 @@ impl Workspace {
             TerminalEvent::Exited => self.close_pane_entity(pane, window, cx),
             TerminalEvent::Attention(note) => {
                 self.request_attention(pane, note.as_ref(), window, cx)
+            }
+            TerminalEvent::StatusChanged => {
+                self.run_spinner(window, cx);
+                cx.notify();
             }
         }
     }
@@ -334,6 +349,53 @@ impl Workspace {
         };
         self.tabs[index].active = pane;
         self.activate_tab(index, window, cx);
+    }
+
+    /// The status a tab shows: the most urgent of its panes' records.
+    fn tab_status(&self, tab: &Tab, cx: &App) -> Option<Shown> {
+        tab.panes
+            .panes()
+            .iter()
+            .filter_map(|p| p.read(cx).status().into_iter().next())
+            .max_by_key(|s| s.record.state.urgency())
+    }
+
+    fn any_working(&self, cx: &App) -> bool {
+        self.tabs.iter().any(|tab| {
+            tab.panes.panes().iter().any(|p| {
+                p.read(cx)
+                    .status()
+                    .iter()
+                    .any(|s| s.record.state == State::Working)
+            })
+        })
+    }
+
+    /// Advances the spinner ten times a second while a pane is working;
+    /// the timer stops when none is.
+    fn run_spinner(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.spinner.is_some() || !self.any_working(cx) {
+            return;
+        }
+        self.spinner = Some(cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                let more = this.update(cx, |this, cx| {
+                    if !this.any_working(cx) {
+                        this.spinner = None;
+                        return false;
+                    }
+                    this.spinner_frame = this.spinner_frame.wrapping_add(1);
+                    cx.notify();
+                    true
+                });
+                if !matches!(more, Ok(true)) {
+                    break;
+                }
+            }
+        }));
     }
 
     /// Whether a tab has a pane waiting for the user.

@@ -22,6 +22,7 @@ use gpui::{
 };
 use lohtty_config::{Config, FontConfig};
 use lohtty_term::notify::Notification;
+use lohtty_term::status::{Kind, Record, Shown, State};
 use lohtty_term::{PassThrough, Session, SessionEvent, TermSize, resolve_shell};
 use lohtty_theme::Theme;
 
@@ -54,6 +55,8 @@ pub enum TerminalEvent {
     /// A program rang the bell (`None`) or asked for a notification: it
     /// may need the user (an agent finished or waits for input).
     Attention(Option<Notification>),
+    /// The program status shown for this pane changed (OSC 7501).
+    StatusChanged,
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -161,6 +164,8 @@ pub struct TerminalView {
     images: Option<images::ImageLayer>,
     _events: Task<()>,
     _subscriptions: Vec<Subscription>,
+    /// The most urgent program status last reported, to notice changes.
+    last_status: Option<State>,
 }
 
 /// A started shell, ready to be shown by a [`TerminalView`].
@@ -248,6 +253,7 @@ impl TerminalView {
             theme,
             font: config.font.clone(),
             focus,
+            last_status: None,
             fonts: None,
             painted: Rc::default(),
             scroll_accum: 0.0,
@@ -338,6 +344,7 @@ impl TerminalView {
             SessionEvent::ResetTitle => self.set_title(self.default_title.clone(), cx),
             SessionEvent::Bell => cx.emit(TerminalEvent::Attention(None)),
             SessionEvent::Notification(note) => cx.emit(TerminalEvent::Attention(Some(note))),
+            SessionEvent::StatusChanged => self.status_changed(cx),
             SessionEvent::ClipboardStore(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text))
             }
@@ -365,9 +372,37 @@ impl TerminalView {
         }
         if focused {
             cx.emit(TerminalEvent::Focused);
+            self.mark_seen(cx);
         }
         // Repaint: the cursor is hollow while unfocused.
         cx.notify();
+    }
+
+    /// The program status records to show, most urgent first.
+    pub fn status(&self) -> Vec<Shown> {
+        self.session.status()
+    }
+
+    /// The user is looking at the pane: finished results stop showing.
+    pub fn mark_seen(&mut self, cx: &mut Context<Self>) {
+        if self.session.status_seen() {
+            self.status_changed(cx);
+        }
+    }
+
+    /// Reports a status change; a pane that becomes blocked, done or failed
+    /// also asks for attention, with the program's message.
+    fn status_changed(&mut self, cx: &mut Context<Self>) {
+        let top = self.session.status().into_iter().next();
+        let state = top.as_ref().map(|s| s.record.state);
+        if state != self.last_status
+            && let Some(Shown { record, .. }) = &top
+            && matches!(record.state, State::Blocked | State::Done | State::Error)
+        {
+            cx.emit(TerminalEvent::Attention(Some(status_notification(record))));
+        }
+        self.last_status = state;
+        cx.emit(TerminalEvent::StatusChanged);
     }
 
     /// The fonts and cell metrics for the current config and display scale,
@@ -533,5 +568,22 @@ impl Render for TerminalView {
                     .right(px(8.0))
                     .child(s.bar.clone())
             }))
+    }
+}
+
+/// The notification for a status that needs the user.
+fn status_notification(record: &Record) -> Notification {
+    let title = record.title.clone().or_else(|| record.app.clone());
+    let default = match (record.state, record.kind) {
+        (State::Blocked, Some(Kind::Permission)) => "Needs your permission",
+        (State::Blocked, Some(Kind::Question)) => "Has a question for you",
+        (State::Blocked, Some(Kind::Auth)) => "Needs you to sign in",
+        (State::Blocked, None) => "Needs your attention",
+        (State::Error, _) => "Failed",
+        _ => "Finished",
+    };
+    Notification {
+        title,
+        body: record.msg.clone().unwrap_or_else(|| default.to_owned()),
     }
 }

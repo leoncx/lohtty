@@ -10,6 +10,10 @@
 //!   whether the payload is the `title` (default) or the `body`, `e=1`
 //!   marks it base64, and `d=0` means more parts follow under the same `i`.
 //!
+//! The same scanner also picks up what the status protocol needs
+//! ([`crate::status`]): OSC 7501 reports and queries, the start of a shell
+//! prompt (OSC 133 A) and full resets (RIS, `ESC c`).
+//!
 //! [`OscScanner`] only watches the output: the sequences still reach the
 //! parser, which ignores them.
 
@@ -20,6 +24,18 @@ use std::collections::HashMap;
 pub struct Notification {
     pub title: Option<String>,
     pub body: String,
+}
+
+/// Something the scanner found in the output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OscEvent {
+    Notification(Notification),
+    /// An OSC 7501 report or query.
+    Status(crate::status::Message),
+    /// A shell prompt starts (OSC 133 A).
+    PromptStart,
+    /// A full reset (RIS).
+    Reset,
 }
 
 /// Longest OSC kept; longer ones are skipped.
@@ -47,8 +63,8 @@ pub struct OscScanner {
 }
 
 impl OscScanner {
-    /// Scans `input`, appending the notifications it completes to `found`.
-    pub fn scan(&mut self, input: &[u8], found: &mut Vec<Notification>) {
+    /// Scans `input`, appending what it completes to `found`.
+    pub fn scan(&mut self, input: &[u8], found: &mut Vec<OscEvent>) {
         for &b in input {
             match self.state {
                 State::Normal => {
@@ -57,6 +73,9 @@ impl OscScanner {
                     }
                 }
                 State::Esc => {
+                    if b == b'c' {
+                        found.push(OscEvent::Reset);
+                    }
                     self.state = if b == b']' {
                         self.osc.clear();
                         self.too_long = false;
@@ -96,20 +115,22 @@ impl OscScanner {
         }
     }
 
-    fn finish(&mut self, found: &mut Vec<Notification>) {
+    fn finish(&mut self, found: &mut Vec<OscEvent>) {
         self.state = State::Normal;
         if self.too_long {
             return;
         }
         let osc = String::from_utf8_lossy(&self.osc).into_owned();
         let (code, rest) = osc.split_once(';').unwrap_or((&osc, ""));
-        let note = match code {
-            "9" => osc9(rest),
-            "777" => osc777(rest),
-            "99" => self.osc99(rest),
+        let event = match code {
+            "9" => osc9(rest).map(OscEvent::Notification),
+            "777" => osc777(rest).map(OscEvent::Notification),
+            "99" => self.osc99(rest).map(OscEvent::Notification),
+            "7501" => crate::status::parse(rest).map(OscEvent::Status),
+            "133" if rest == "A" || rest.starts_with("A;") => Some(OscEvent::PromptStart),
             _ => None,
         };
-        found.extend(note);
+        found.extend(event);
     }
 
     fn osc99(&mut self, rest: &str) -> Option<Notification> {
@@ -210,7 +231,7 @@ fn clean(text: &str) -> String {
 }
 
 /// Standard base64, padding optional; `None` if invalid.
-fn decode_base64(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_base64(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() * 3 / 4);
     let (mut acc, mut bits) = (0u32, 0u32);
     for c in text.bytes() {
@@ -238,9 +259,37 @@ mod tests {
     use super::*;
 
     fn scan(input: &[u8]) -> Vec<Notification> {
+        events(input)
+            .into_iter()
+            .filter_map(|e| match e {
+                OscEvent::Notification(n) => Some(n),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn events(input: &[u8]) -> Vec<OscEvent> {
         let mut found = Vec::new();
         OscScanner::default().scan(input, &mut found);
         found
+    }
+
+    #[test]
+    fn status_prompt_and_reset() {
+        use crate::status::Message;
+        assert_eq!(
+            events(b"\x1b]7501;?\x1b\\"),
+            vec![OscEvent::Status(Message::Query)]
+        );
+        assert!(matches!(
+            events(b"\x1b]7501;state=working\x07")[..],
+            [OscEvent::Status(Message::Set { .. })]
+        ));
+        assert_eq!(
+            events(b"\x1b]133;A\x07\x1b]133;B\x07"),
+            vec![OscEvent::PromptStart]
+        );
+        assert_eq!(events(b"x\x1bcy"), vec![OscEvent::Reset]);
     }
 
     fn note(title: Option<&str>, body: &str) -> Notification {
@@ -307,7 +356,7 @@ mod tests {
         ] {
             scanner.scan(chunk, &mut found);
         }
-        assert_eq!(found, vec![note(None, "Done")]);
+        assert_eq!(found, vec![OscEvent::Notification(note(None, "Done"))]);
     }
 
     #[test]

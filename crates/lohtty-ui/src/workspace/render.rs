@@ -110,6 +110,7 @@ impl Workspace {
                         let active = i == self.active_tab;
                         let title = tab.active.read(cx).title().to_owned();
                         let waiting = self.tab_needs_attention(tab);
+                        let status = self.status_badge(self.tab_status(tab, cx), ("tab-status", i));
                         div()
                             .id(("tab", i))
                             .flex()
@@ -136,6 +137,7 @@ impl Workspace {
                                     this.close_tab_at(i, window, cx)
                                 }),
                             )
+                            .children(status)
                             .children(attention_dot(waiting))
                             .child(div().flex_1().min_w_0().truncate().child(title))
                             .child(
@@ -172,6 +174,7 @@ impl Workspace {
         let centered_title = single.then(|| {
             let title = self.tabs[0].active.read(cx).title().to_owned();
             let waiting = self.tab_needs_attention(&self.tabs[0]);
+            let status = self.status_badge(self.tab_status(&self.tabs[0], cx), "title-status");
             div()
                 .absolute()
                 .top_0()
@@ -181,6 +184,7 @@ impl Workspace {
                 .items_center()
                 .justify_center()
                 .gap_2()
+                .children(status)
                 .children(attention_dot(waiting))
                 .child(
                     div()
@@ -222,6 +226,65 @@ impl Workspace {
             .when(CUSTOM_TITLEBAR, |el| {
                 el.child(self.render_caption_buttons(window))
             })
+    }
+
+    /// A tab's program status (OSC 7501): a spinner while working (with the
+    /// progress, if given), `!` when blocked on the user, a check when done,
+    /// a cross on error; nothing when idle. The tooltip says who and what.
+    fn status_badge(&self, status: Option<Shown>, id: impl Into<ElementId>) -> Option<AnyElement> {
+        const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let Shown { record, .. } = status?;
+        let t = &self.theme;
+        let (glyph, color, label) = match record.state {
+            State::Idle => return None,
+            State::Working => (
+                SPINNER[self.spinner_frame % SPINNER.len()],
+                t.ansi[4],
+                match record.progress {
+                    Some(p) => format!("Working, {p}%"),
+                    None => "Working".to_owned(),
+                },
+            ),
+            State::Blocked => (
+                "!",
+                t.ansi[3],
+                match record.kind {
+                    Some(Kind::Permission) => "Needs your permission",
+                    Some(Kind::Question) => "Has a question for you",
+                    Some(Kind::Auth) => "Needs you to sign in",
+                    None => "Waiting for you",
+                }
+                .to_owned(),
+            ),
+            State::Done => ("✓", t.ansi[2], "Done".to_owned()),
+            State::Error => ("✕", t.ansi[1], "Failed".to_owned()),
+        };
+        let who = record.title.clone().or(record.app.clone());
+        let mut tip = match who {
+            Some(who) => format!("{who}: {label}"),
+            None => label,
+        };
+        if let Some(msg) = &record.msg {
+            tip.push_str(" \u{2014} ");
+            tip.push_str(msg);
+        }
+        let progress = (record.state == State::Working)
+            .then_some(record.progress)
+            .flatten()
+            .map(|p| format!("{p}%"));
+        Some(
+            div()
+                .id(id.into())
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_1()
+                .text_color(to_rgba(color))
+                .child(glyph)
+                .children(progress.map(|p| div().text_xs().child(p)))
+                .tooltip(Tooltip::text(tip, t))
+                .into_any_element(),
+        )
     }
 
     /// Title-bar controls that act on tabs or panes are dimmed and ignore the

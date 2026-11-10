@@ -16,6 +16,8 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 - Mouse selection, clipboard, bracketed paste
 - Mouse reporting for terminal apps
 - OSC 8 hyperlinks
+- Coding agents' session status on their tab (working, waiting for you, done,
+  failed), through the Program Status Protocol (OSC 7501)
 - Attention alerts for coding agents and other programs: a tab mark, and on
   Windows a taskbar flash and desktop notification when lohtty isn't in front
 - Images through the kitty graphics protocol (PNG, RGB/RGBA; direct, file and
@@ -181,6 +183,14 @@ send it to terminals they recognize. To turn it on:
 
 - **Other tools:** anything that sends OSC 9 (iTerm2's form), OSC 777
   `notify` or OSC 99 (kitty's), or rings the bell.
+
+**Session status.** Programs that report their state with the Program Status
+Protocol (OSC 7501), such as Claude Code 2.1.295 and later, show it on their
+tab: a spinner while working (with the progress, if any), `!` when waiting for
+you (a permission, a question, a sign-in), ✓ when done and ✕ on error. The
+tooltip has the program's message. Done and error clear when you visit the
+pane. A program that becomes blocked, done or failed in a pane you aren't
+looking at also triggers the alerts above. Nothing needs to be turned on.
 
 **Shift+Enter** inserts a new line in agents' prompts instead of sending
 them. lohtty supports the kitty keyboard protocol (the level programs use to

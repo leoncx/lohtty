@@ -11,6 +11,7 @@ pub mod notify;
 pub mod search;
 mod session;
 mod shell;
+pub mod status;
 
 pub use alacritty_terminal;
 pub use filter::{OutputFilter, PassThrough, Screen};

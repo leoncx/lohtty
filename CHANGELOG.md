@@ -22,6 +22,8 @@ version and changelog section, and uses that section as the release notes.
 - Themes (Tokyo Night by default) and live config reload.
 - Background opacity and blur, ligatures, Nerd Font icon fallbacks.
 - Mouse selection, clipboard, bracketed paste, mouse reporting, OSC 8 links.
+- Session status for coding agents and other programs (Program Status
+  Protocol, OSC 7501): working, blocked, done or failed, shown on the tab.
 - Shift+Enter in coding agents and other programs: the kitty keyboard
   protocol (disambiguate level) and, on Windows, ConPTY's win32 input mode
   for modified Enter.
