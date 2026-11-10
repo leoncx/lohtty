@@ -9,11 +9,17 @@ use lohtty_theme::Theme;
 use lohtty_ui::{Workspace, load_theme, window_background};
 use tracing_subscriber::EnvFilter;
 
+const DEFAULT_LOG_FILTER: &str =
+    "warn,lohtty=info,lohtty_ui=info,lohtty_term=info,lohtty_config=info,lohtty_theme=info";
+
 fn main() {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(
-            EnvFilter::try_from_env("LOHTTY_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
+            // By default lohtty's own messages, and only warnings from the
+            // libraries (gpui's renderer logs every pipeline at info).
+            EnvFilter::try_from_env("LOHTTY_LOG")
+                .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER)),
         )
         .init();
 

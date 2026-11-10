@@ -7,24 +7,24 @@ mod paint;
 mod search;
 
 use std::cell::Cell;
-use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::index::Side;
 use alacritty_terminal::term::TermMode;
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, DispatchPhase, ElementInputHandler,
-    EventEmitter, FocusHandle, Focusable, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight,
-    IntoElement, KeyBinding, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Subscription,
-    Task, Window, actions, canvas, div, prelude::*, px,
+    EventEmitter, FocusHandle, Focusable, Font, FontFeatures, FontStyle, FontWeight, IntoElement,
+    KeyBinding, MouseMoveEvent, MouseUpEvent, Pixels, Point, Render, Subscription, Task, Window,
+    actions, canvas, div, prelude::*, px,
 };
-use lohtty_config::{Config, DEFAULT_FALLBACKS, FontConfig};
+use lohtty_config::{Config, FontConfig};
 use lohtty_term::{PassThrough, Session, SessionEvent, TermSize, resolve_shell};
 use lohtty_theme::Theme;
 
 use crate::colors;
+use crate::fonts;
 use crate::paint_now::PaintNow;
 use paint::FramePainter;
 
@@ -369,9 +369,10 @@ impl TerminalView {
         if let Some(set) = &self.fonts {
             return set.clone();
         }
-        let fallbacks = resolve_fallbacks(&self.font, window);
+        let fallbacks = fonts::fallbacks(&self.font, window);
+        let family = fonts::family(&self.font.family, window);
         let make = |bold: bool, italic: bool| Font {
-            family: self.font.family.clone().into(),
+            family: family.clone(),
             features: if self.font.ligatures {
                 // Explicit, not `default()`: on Windows gpui applies an empty
                 // feature list as "no features", which disables ligatures.
@@ -429,28 +430,6 @@ impl TerminalView {
 struct FontSet {
     fonts: [Font; 4],
     metrics: CellMetrics,
-}
-
-/// The configured fallback list, or the installed subset of the defaults.
-fn resolve_fallbacks(font: &FontConfig, window: &Window) -> Option<FontFallbacks> {
-    static INSTALLED_DEFAULTS: OnceLock<Vec<String>> = OnceLock::new();
-    let names = match &font.fallbacks {
-        Some(list) => list.clone(),
-        None => INSTALLED_DEFAULTS
-            .get_or_init(|| {
-                let installed: HashSet<String> =
-                    window.text_system().all_font_names().into_iter().collect();
-                let found: Vec<String> = DEFAULT_FALLBACKS
-                    .iter()
-                    .filter(|name| installed.contains(**name))
-                    .map(|name| name.to_string())
-                    .collect();
-                tracing::info!(?found, "default font fallbacks");
-                found
-            })
-            .clone(),
-    };
-    (!names.is_empty()).then(|| FontFallbacks::from_fonts(names))
 }
 
 impl Focusable for TerminalView {

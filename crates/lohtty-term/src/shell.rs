@@ -5,18 +5,37 @@ use std::path::{Path, PathBuf};
 pub struct ShellSpec {
     pub program: String,
     pub args: Vec<String>,
+    /// Start the user's shell as a login shell (argv0 `-zsh`), as macOS
+    /// terminals do: apps opened from Finder get a minimal `PATH`, which the
+    /// login profile completes. Set only for the default shell, so `program`
+    /// is the user's shell and `args` is empty.
+    pub login: bool,
+}
+
+impl ShellSpec {
+    /// `program` with `args`, not as a login shell.
+    pub fn new(program: impl Into<String>, args: Vec<String>) -> Self {
+        Self {
+            program: program.into(),
+            args,
+            login: false,
+        }
+    }
 }
 
 /// Resolves the shell to launch: the configured program if any, otherwise the
-/// platform default (`pwsh.exe`, then `powershell.exe` on Windows; `$SHELL` elsewhere).
+/// platform default: `pwsh.exe`, then `powershell.exe` on Windows; elsewhere
+/// `$SHELL`, else the account's shell, as a login shell on macOS (where the
+/// configured args then don't apply).
 pub fn resolve_shell(program: Option<&str>, args: &[String]) -> ShellSpec {
-    let program = match program {
-        Some(p) if !p.trim().is_empty() => p.to_owned(),
-        _ => default_shell(),
-    };
-    ShellSpec {
-        program,
-        args: args.to_vec(),
+    match program {
+        Some(p) if !p.trim().is_empty() => ShellSpec::new(p, args.to_vec()),
+        _ if cfg!(target_os = "macos") => ShellSpec {
+            program: default_shell(),
+            args: Vec::new(),
+            login: true,
+        },
+        _ => ShellSpec::new(default_shell(), args.to_vec()),
     }
 }
 
@@ -31,10 +50,8 @@ fn default_shell() -> String {
 
 #[cfg(not(windows))]
 fn default_shell() -> String {
-    std::env::var("SHELL")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "/bin/sh".into())
+    // The lookup portable-pty does for a login shell.
+    portable_pty::CommandBuilder::new_default_prog().get_shell()
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -54,6 +71,15 @@ mod tests {
         let spec = resolve_shell(Some("bash"), &["-l".into()]);
         assert_eq!(spec.program, "bash");
         assert_eq!(spec.args, vec!["-l".to_string()]);
+    }
+
+    #[test]
+    fn default_shell_is_a_login_shell_only_on_macos() {
+        let spec = resolve_shell(None, &["-x".into()]);
+        assert_eq!(spec.login, cfg!(target_os = "macos"));
+        // A login shell is started by portable-pty, without the args.
+        assert_eq!(spec.args.is_empty(), spec.login);
+        assert!(!resolve_shell(Some("bash"), &[]).login);
     }
 
     #[test]

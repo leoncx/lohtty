@@ -39,6 +39,32 @@ Get-FileHash .\lohtty-<version>-windows-x64.msi -Algorithm SHA256
 For the zip, you can also clear the download mark before extracting
 (*Properties → Unblock*, or `Unblock-File .\lohtty-<version>-windows-x64.zip`).
 
+**Linux.** Releases need glibc 2.35 or later (Ubuntu 22.04, Debian 12,
+Fedora 36 and newer) and a Vulkan driver.
+
+- **AppImage:** download `lohtty-<version>-linux-x86_64.AppImage` (or
+  `-aarch64`), then `chmod +x` it and run it. It needs FUSE (most desktops
+  have it); without it, run it with `--appimage-extract-and-run`.
+- **Tarball:** `lohtty-<version>-linux-x86_64.tar.gz` holds the binary, a
+  `.desktop` entry and the icon. It uses the system's `libxkbcommon` and
+  `libxkbcommon-x11`, which the AppImage bundles. To add it to your menus:
+
+  ```sh
+  install -Dm755 lohtty ~/.local/bin/lohtty
+  install -Dm644 lohtty.desktop ~/.local/share/applications/lohtty.desktop
+  install -Dm644 lohtty.png ~/.local/share/icons/hicolor/256x256/apps/lohtty.png
+  ```
+
+Check a download with `sha256sum -c SHA256SUMS --ignore-missing`.
+
+**macOS** 11 or later, Apple Silicon or Intel. Open
+`lohtty-<version>-macos-universal.dmg` and drag *lohtty* to *Applications*.
+The app isn't notarized, so macOS blocks the first launch: open *System
+Settings → Privacy & Security* and click **Open Anyway** (on macOS 14 and
+earlier, right-click the app and choose **Open**). Or clear the download mark
+with `xattr -dr com.apple.quarantine /Applications/lohtty.app`. Check the
+download with `shasum -a 256 -c SHA256SUMS --ignore-missing`.
+
 **From source** (rustup installs the Rust version pinned in
 `rust-toolchain.toml`):
 
@@ -48,10 +74,23 @@ cargo build --release --no-default-features  # without kitty graphics
 pwsh -File scripts/package.ps1 # dist\lohtty-<version>-windows-x64.zip
 ```
 
+On Linux, install the development packages first (names for Debian and
+Ubuntu), then package with `scripts/package-linux.sh [--appimage]`:
+
+```sh
+sudo apt install build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-dev \
+  libwayland-dev libvulkan-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev libssl-dev
+```
+
+On macOS, building needs Xcode, not just the Command Line Tools (gpui compiles
+its Metal shaders with it). `scripts/package-macos.sh` builds the universal
+app and its disk image.
+
 ## Configuration
 
-The config lives at `%APPDATA%\lohtty\config.toml` (on Linux and macOS,
-`$XDG_CONFIG_HOME/lohtty/config.toml`). Every key is optional. Changes apply
+The config lives at `%APPDATA%\lohtty\config.toml` on Windows,
+`~/Library/Application Support/lohtty/config.toml` on macOS and
+`$XDG_CONFIG_HOME/lohtty/config.toml` (usually `~/.config/lohtty`) on Linux. Every key is optional. Changes apply
 as soon as the file is saved, except `shell`, which only affects new tabs and
 panes. If a config is invalid, lohtty keeps the previous settings and shows a
 red error bar.
@@ -66,11 +105,12 @@ theme = "tokyo-night"      # tokyo-night, tokyo-night-storm, tokyo-night-moon, t
 scrollback = 10000
 
 [shell]
-program = "pwsh.exe"       # default: pwsh.exe, else powershell.exe ($SHELL elsewhere)
+program = "pwsh.exe"       # default: pwsh.exe, else powershell.exe; $SHELL elsewhere
+                           # (a login shell on macOS)
 args = ["-NoLogo"]
 
 [font]
-family = "Cascadia Code"
+family = "Cascadia Code"   # default; Menlo on macOS, the first installed common monospace font on Linux
 size = 14.0
 ligatures = true
 # Fonts used for characters the main font lacks (e.g. Nerd Font icons).
@@ -145,8 +185,13 @@ Mouse:
   ConPTY that passes the protocol's escape sequences through (verified on
   Windows 11 build 26300). Animation and Unicode placeholders (`U=1`) aren't
   supported yet.
+- **Black or missing window on Linux.** lohtty draws with Vulkan: check that
+  a Vulkan driver is installed (`vulkaninfo --summary`, from `vulkan-tools`).
+  Mesa's software renderer in Ubuntu 22.04 shows a black window under Xvfb;
+  newer Mesa works.
 - **Logs.** Set `LOHTTY_LOG=debug` (or `lohtty_term::pty=trace` for raw
-  shell output) and start lohtty from another terminal. Logs go to stderr.
+  shell output) and start lohtty from another terminal. Logs go to stderr. By
+  default they show lohtty's own messages and the libraries' warnings.
 
 ## License
 

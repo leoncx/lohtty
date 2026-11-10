@@ -144,8 +144,23 @@ impl Session {
             .openpty(size.pty_size())
             .context("failed to open PTY")?;
 
-        let mut cmd = CommandBuilder::new(&shell.program);
-        cmd.args(&shell.args);
+        let mut cmd = if shell.login {
+            // portable-pty picks the same shell as `shell.program`.
+            CommandBuilder::new_default_prog()
+        } else {
+            let mut cmd = CommandBuilder::new(&shell.program);
+            cmd.args(&shell.args);
+            cmd
+        };
+        // Apps opened from Finder have no locale set, so shells would fall
+        // back to ASCII. Terminal.app sets the same.
+        if cfg!(target_os = "macos")
+            && ["LC_ALL", "LC_CTYPE", "LANG"]
+                .iter()
+                .all(|v| std::env::var_os(v).is_none())
+        {
+            cmd.env("LC_CTYPE", "UTF-8");
+        }
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "lohtty");

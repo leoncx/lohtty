@@ -94,14 +94,35 @@ pub const DEFAULT_FALLBACKS: &[&str] = &[
     "Hack Nerd Font Mono",
 ];
 
+/// The generic family name: the default on Linux, where it stands for the
+/// first installed of [`MONOSPACE_CANDIDATES`].
+pub const MONOSPACE: &str = "monospace";
+
+/// Fonts tried, in order, for the generic [`MONOSPACE`] family: the usual
+/// monospace fonts of Linux distributions first.
+pub const MONOSPACE_CANDIDATES: &[&str] = &[
+    "DejaVu Sans Mono",
+    "Noto Sans Mono",
+    "Liberation Mono",
+    "Ubuntu Mono",
+    "Cascadia Mono",
+    "Source Code Pro",
+    "Hack",
+    "Menlo",
+    "Consolas",
+];
+
 impl Default for FontConfig {
     fn default() -> Self {
         Self {
-            // Cascadia Code ships with Windows Terminal and has ligatures.
+            // Cascadia Code ships with Windows Terminal and has ligatures;
+            // Menlo ships with macOS.
             family: if cfg!(windows) {
                 "Cascadia Code"
+            } else if cfg!(target_os = "macos") {
+                "Menlo"
             } else {
-                "monospace"
+                MONOSPACE
             }
             .into(),
             size: 14.0,

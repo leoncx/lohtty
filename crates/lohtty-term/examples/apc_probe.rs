@@ -20,14 +20,11 @@ impl OutputFilter for Probe {
 }
 
 fn main() -> anyhow::Result<()> {
-    let shell = ShellSpec {
-        program: "pwsh.exe".into(),
-        args: vec![
+    let shell = ShellSpec::new("pwsh.exe", vec![
             "-NoProfile".into(),
             "-Command".into(),
             r#"[Console]::Out.Write("before`e_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA`e\after"); [Console]::Out.Flush(); Start-Sleep -Milliseconds 300"#.into(),
-        ],
-    };
+        ]);
     let size = TermSize {
         cols: 80,
         rows: 24,

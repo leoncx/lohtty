@@ -23,15 +23,12 @@ fn screen_text(session: &Session) -> String {
 #[test]
 fn shell_output_reaches_the_grid() {
     let shell = if cfg!(windows) {
-        ShellSpec {
-            program: "cmd.exe".into(),
-            args: vec!["/c".into(), "echo lohtty-ok".into()],
-        }
+        ShellSpec::new("cmd.exe", vec!["/c".into(), "echo lohtty-ok".into()])
     } else {
-        ShellSpec {
-            program: "/bin/sh".into(),
-            args: vec!["-c".into(), "echo lohtty-ok; sleep 1".into()],
-        }
+        ShellSpec::new(
+            "/bin/sh",
+            vec!["-c".into(), "echo lohtty-ok; sleep 1".into()],
+        )
     };
     let size = TermSize {
         cols: 80,
@@ -60,22 +57,22 @@ fn shell_output_reaches_the_grid() {
 #[test]
 fn unterminated_synchronized_update_is_flushed() {
     let shell = if cfg!(windows) {
-        ShellSpec {
-            program: "powershell.exe".into(),
-            args: vec![
+        ShellSpec::new(
+            "powershell.exe",
+            vec![
                 "-NoProfile".into(),
                 "-Command".into(),
                 "[Console]::Write([char]27 + '[?2026hsync-flushed'); Start-Sleep 5".into(),
             ],
-        }
+        )
     } else {
-        ShellSpec {
-            program: "/bin/sh".into(),
-            args: vec![
+        ShellSpec::new(
+            "/bin/sh",
+            vec![
                 "-c".into(),
                 "printf '\\033[?2026hsync-flushed'; sleep 5".into(),
             ],
-        }
+        )
     };
     let size = TermSize {
         cols: 80,
@@ -103,15 +100,9 @@ fn unterminated_synchronized_update_is_flushed() {
 #[test]
 fn resize_updates_grid_dimensions() {
     let shell = if cfg!(windows) {
-        ShellSpec {
-            program: "cmd.exe".into(),
-            args: vec![],
-        }
+        ShellSpec::new("cmd.exe", vec![])
     } else {
-        ShellSpec {
-            program: "/bin/sh".into(),
-            args: vec![],
-        }
+        ShellSpec::new("/bin/sh", vec![])
     };
     let size = TermSize {
         cols: 80,

@@ -84,8 +84,84 @@ jobs:
             dist/*.msi
           if-no-files-found: error
 
+  linux:
+    needs: check
+    strategy:
+      fail-fast: true
+      matrix:
+        # Built on the oldest supported distribution: the binary needs at
+        # least its glibc (2.35). The ARM runner is free for public repos only.
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.runner }}
+      - name: Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libvulkan-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev libssl-dev \
+            patchelf xvfb mesa-vulkan-drivers
+      - name: Package
+        run: scripts/package-linux.sh --appimage
+      - name: Smoke test
+        run: |
+          # Both builds must start and keep running on a virtual display
+          # (software Vulkan; nothing is checked on screen).
+          Xvfb :99 -screen 0 1280x800x24 & sleep 2
+          export DISPLAY=:99 APPIMAGE_EXTRACT_AND_RUN=1
+          tar -C "$RUNNER_TEMP" -xzf "$(ls dist/lohtty-*.tar.gz | grep -v -- -debug.tar.gz)"
+          for exe in "$RUNNER_TEMP"/lohtty-*/lohtty dist/lohtty-*.AppImage; do
+            "$exe" & pid=$!
+            sleep 5
+            kill -0 $pid || { wait $pid; echo "$exe exited early ($?)"; exit 1; }
+            kill $pid
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.runner }}
+          path: |
+            dist/*.tar.gz
+            dist/*.AppImage
+          if-no-files-found: error
+
+  macos:
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - name: Package
+        run: scripts/package-macos.sh
+      - name: Smoke test
+        run: |
+          # The app from the disk image must be universal, signed, and start
+          # and keep running.
+          hdiutil attach -nobrowse -mountpoint "$RUNNER_TEMP/dmg" dist/*.dmg
+          app="$RUNNER_TEMP/dmg/lohtty.app"
+          lipo -archs "$app/Contents/MacOS/lohtty"
+          codesign --verify --strict "$app"
+          "$app/Contents/MacOS/lohtty" & pid=$!
+          sleep 5
+          kill -0 $pid || { wait $pid; echo "lohtty exited early ($?)"; exit 1; }
+          kill $pid
+          hdiutil detach "$RUNNER_TEMP/dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+
   publish:
-    needs: [check, windows]
+    needs: [check, windows, linux, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -96,7 +172,8 @@ jobs:
       - name: Checksums
         run: |
           mkdir release
-          find artifacts \( -name '*.zip' -o -name '*.msi' \) -exec cp {} release/ \;
+          find artifacts \( -name '*.zip' -o -name '*.msi' -o -name '*.tar.gz' \
+            -o -name '*.AppImage' -o -name '*.dmg' \) -exec cp {} release/ \;
           cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:

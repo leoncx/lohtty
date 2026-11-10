@@ -1,0 +1,4 @@
+# Shell scripts and Unix packaging files must keep LF line endings.
+*.sh text eol=lf
+*.desktop text eol=lf
+*.plist text eol=lf

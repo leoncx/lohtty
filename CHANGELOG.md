@@ -25,3 +25,5 @@ version and changelog section, and uses that section as the release notes.
 - Kitty graphics protocol: PNG and raw images, anchored to scrollback.
 - Fast rendering of streaming output, and keystroke-to-screen latency on par
   with Windows Terminal.
+- Releases for Windows (zip and per-user MSI, x64 and ARM64), Linux (tarball
+  and AppImage, x86_64 and ARM64) and macOS (universal app in a disk image).

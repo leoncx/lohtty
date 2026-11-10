@@ -430,7 +430,7 @@ impl Render for Workspace {
             .flex()
             .flex_col()
             .text_color(to_rgba(theme.foreground))
-            .font_family(self.config.font.family.clone())
+            .font_family(crate::fonts::family(&self.config.font.family, window))
             .text_size(px(self.config.font.size))
             .on_action(cx.listener(Self::open_settings))
             // While the settings dialog is open, workspace shortcuts would act

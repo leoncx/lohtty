@@ -1,12 +1,28 @@
-# Generates assets/icons/lohtty.ico: a ">_" prompt on a Tokyo Night tile.
-# Multi-size ICO with PNG-encoded frames (supported since Windows Vista).
+# Generates the application icon, a ">_" prompt on a Tokyo Night tile:
+#   lohtty.ico   Windows: multi-size ICO with PNG frames (Windows Vista and later)
+#   lohtty.png   Linux: 256x256, for the .desktop entry and the AppImage
+#   lohtty.icns  macOS: PNG entries from 16 to 1024 px, with the margin macOS
+#                icons keep around the tile (the tile fills about 80%)
 #   pwsh -File assets/icons/make-icon.ps1
 Add-Type -AssemblyName System.Drawing
 
 $sizes = 16, 24, 32, 48, 64, 128, 256
 $out = Join-Path $PSScriptRoot 'lohtty.ico'
 
-function New-Frame([int]$n) {
+# A PNG of the icon, $n pixels square, with the tile filling $fill of it.
+function New-Frame([int]$n, [double]$fill = 1.0) {
+    if ($fill -lt 1.0) {
+        $inner = [System.Drawing.Image]::FromStream([System.IO.MemoryStream]::new((New-Frame ([int][Math]::Round($n * $fill)))))
+        $bmp = New-Object System.Drawing.Bitmap $n, $n
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.Clear([System.Drawing.Color]::Transparent)
+        $at = [int](($n - $inner.Width) / 2)
+        $g.DrawImage($inner, $at, $at, $inner.Width, $inner.Height)
+        $ms = New-Object System.IO.MemoryStream
+        $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+        $g.Dispose(); $bmp.Dispose(); $inner.Dispose()
+        return , $ms.ToArray()
+    }
     $bmp = New-Object System.Drawing.Bitmap $n, $n
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
@@ -61,3 +77,30 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 foreach ($data in $frames) { $bw.Write($data) }
 $bw.Close()
 "wrote $out ($((Get-Item $out).Length) bytes)"
+
+$png = Join-Path $PSScriptRoot 'lohtty.png'
+[System.IO.File]::WriteAllBytes($png, (New-Frame 256))
+"wrote $png ($((Get-Item $png).Length) bytes)"
+
+# ICNS: 'icns' + total length, then (type, length incl. 8-byte header, PNG)
+# per entry. All integers are big-endian.
+function Write-BE([System.IO.BinaryWriter]$w, [UInt32]$v) {
+    $b = [BitConverter]::GetBytes($v); [Array]::Reverse($b); $w.Write($b)
+}
+$entries = [ordered]@{
+    icp4 = 16; icp5 = 32; ic11 = 32; icp6 = 64; ic12 = 64; ic07 = 128
+    ic08 = 256; ic13 = 256; ic09 = 512; ic14 = 512; ic10 = 1024
+}
+$icns = Join-Path $PSScriptRoot 'lohtty.icns'
+$data = foreach ($e in $entries.GetEnumerator()) { , @($e.Key, (New-Frame $e.Value 0.8)) }
+$fs = [System.IO.File]::Create($icns)
+$bw = New-Object System.IO.BinaryWriter $fs
+$bw.Write([Text.Encoding]::ASCII.GetBytes('icns'))
+Write-BE $bw (8 + ($data | ForEach-Object { 8 + $_[1].Length } | Measure-Object -Sum).Sum)
+foreach ($d in $data) {
+    $bw.Write([Text.Encoding]::ASCII.GetBytes($d[0]))
+    Write-BE $bw (8 + $d[1].Length)
+    $bw.Write($d[1])
+}
+$bw.Close()
+"wrote $icns ($((Get-Item $icns).Length) bytes)"

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=lohtty
+GenericName=Terminal
+Comment=GPU-accelerated terminal
+Exec=lohtty
+Icon=lohtty
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=shell;prompt;command;commandline;terminal;
+StartupWMClass=lohtty

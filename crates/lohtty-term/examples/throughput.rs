@@ -14,10 +14,7 @@ fn main() -> anyhow::Result<()> {
     let program = args
         .next()
         .ok_or_else(|| anyhow::anyhow!("usage: throughput <program> [args...]"))?;
-    let shell = ShellSpec {
-        program,
-        args: args.collect(),
-    };
+    let shell = ShellSpec::new(program, args.collect());
     let size = TermSize {
         cols: 120,
         rows: 40,
