@@ -1,0 +1,6 @@
+# One toolchain for local builds, CI and releases. CI installs whatever this
+# file names (`rustup toolchain install`), so bump it here only.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

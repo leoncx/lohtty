@@ -1,25 +1,81 @@
 name: Release
 
+# Push a tag vX.Y.Z to release. The tag must match the lohtty crate version
+# and have a `## [X.Y.Z]` section in CHANGELOG.md (scripts/release-check.ps1).
 on:
   push:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Check version and changelog
+        shell: pwsh
+        run: ./scripts/release-check.ps1 -Tag "${{ github.ref_name }}" -NotesOut notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: notes
+          path: notes.md
+
   windows:
+    needs: check
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [x86_64-pc-windows-msvc]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install the pinned toolchain
+        run: rustup toolchain install && rustup target add ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
       - name: Package
-        id: package
+        shell: pwsh
+        run: ./scripts/package.ps1 -Target ${{ matrix.target }}
+      - name: Smoke test
         shell: pwsh
         run: |
-          $zip = ./scripts/package.ps1 | Select-Object -Last 1
-          "zip=$zip" >> $env:GITHUB_OUTPUT
+          # The exe must start and keep running (it has a window, so no output).
+          $exe = "target/${{ matrix.target }}/release/lohtty.exe"
+          $p = Start-Process $exe -PassThru
+          Start-Sleep -Seconds 5
+          if ($p.HasExited) { throw "lohtty exited early with code $($p.ExitCode)" }
+          $p.Kill()
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.target }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [check, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Checksums
+        run: |
+          mkdir release
+          find artifacts -name '*.zip' -exec cp {} release/ \;
+          cd release && sha256sum * > SHA256SUMS && cat SHA256SUMS
       - uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.package.outputs.zip }}
+          body_path: artifacts/notes/notes.md
+          files: release/*
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

@@ -33,11 +33,14 @@ all = { level = "warn", priority = -1 }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+# Line tables only: optimizations are unchanged, and on Windows they go to a
+# separate PDB (shipped as its own archive), so the exe doesn't grow.
+debug = "line-tables-only"
 
-# Release optimizations plus line tables, for profilers:
+# Same as release (which now has line tables), kept for the documented
+# profiler workflow:
 #   cargo build --profile profiling
 # The PDB has function names and lines (dbghelp resolves them); samply may
 # still show placeholder names for lohtty.exe, so symbolize against this PDB.
 [profile.profiling]
 inherits = "release"
-debug = "line-tables-only"

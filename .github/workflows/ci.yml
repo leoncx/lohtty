@@ -13,9 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
       - run: cargo fmt --all --check
 
   build:
@@ -26,9 +25,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - name: Linux deps
         if: runner.os == 'Linux'
@@ -36,7 +34,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
             libvulkan-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev libssl-dev
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Build without kitty graphics
-        run: cargo clippy -p lohtty --no-default-features --all-targets -- -D warnings
-      - run: cargo test --workspace
+        run: cargo clippy --locked -p lohtty --no-default-features --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
+      - name: Release scripts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # The version check must reject a tag that doesn't match Cargo.toml.
+          ./scripts/release-check.ps1 -Tag v0.0.0-ci 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'release-check accepted a wrong tag' }
+          exit 0
