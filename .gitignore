@@ -4,3 +4,5 @@
 # samply output
 profile.json.gz
 *.syms.json
+# git bundles made to copy the repo to another machine
+*.bundle
