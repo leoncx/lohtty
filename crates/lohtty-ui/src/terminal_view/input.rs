@@ -11,7 +11,7 @@ use gpui::{
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent,
     UTF16Selection, Window,
 };
-use lohtty_term::input::{KeyInput, encode_key, encode_paste, is_text_key};
+use lohtty_term::input::{KeyInput, encode_key, encode_paste, encode_win32, is_text_key};
 use lohtty_term::mouse::{self, MouseAction, MouseReport, encode_mouse, wants_mouse};
 
 use super::{Copy, Paste, TerminalView};
@@ -51,7 +51,16 @@ impl TerminalView {
             return;
         }
         let mode = *self.session.term().lock().mode();
-        if let Some(bytes) = encode_key(&input, mode) {
+        // A program that asked for the kitty keyboard protocol gets its
+        // encoding (ConPTY passes it through). Otherwise, under ConPTY's
+        // win32 input mode, keys VT can't express (Shift+Enter) go as key
+        // records, as Windows Terminal sends them, for programs that read
+        // console key events.
+        let win32 = (!mode.contains(TermMode::DISAMBIGUATE_ESC_CODES)
+            && self.session.win32_input_mode())
+        .then(|| encode_win32(&input))
+        .flatten();
+        if let Some(bytes) = win32.or_else(|| encode_key(&input, mode)) {
             if self.pending_dead_key() {
                 // Let Windows resolve the dead key: propagating lets gpui call
                 // TranslateMessage, which emits the accent as text and clears the

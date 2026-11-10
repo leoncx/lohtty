@@ -22,6 +22,9 @@ version and changelog section, and uses that section as the release notes.
 - Themes (Tokyo Night by default) and live config reload.
 - Background opacity and blur, ligatures, Nerd Font icon fallbacks.
 - Mouse selection, clipboard, bracketed paste, mouse reporting, OSC 8 links.
+- Shift+Enter in coding agents and other programs: the kitty keyboard
+  protocol (disambiguate level) and, on Windows, ConPTY's win32 input mode
+  for modified Enter.
 - Attention alerts: a program that rings the bell or sends a notification
   (OSC 9, 777, 99), such as a coding agent that finished or waits for input,
   marks its tab; on Windows, when lohtty isn't in front, the taskbar button

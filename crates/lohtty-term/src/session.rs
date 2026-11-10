@@ -14,6 +14,7 @@ use alacritty_terminal::vte::ansi::{Processor, Rgb, StdSyncHandler};
 use anyhow::Context as _;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+use crate::modes::ModeWatcher;
 use crate::notify::{Notification, OscScanner};
 use crate::{OutputFilter, ShellSpec};
 
@@ -146,6 +147,8 @@ pub struct Session {
     size: Arc<Mutex<TermSize>>,
     dirty: Arc<AtomicBool>,
     program: String,
+    /// Whether ConPTY asked for win32 input mode (see [`crate::modes`]).
+    win32_input: Arc<AtomicBool>,
 }
 
 impl Session {
@@ -208,6 +211,9 @@ impl Session {
         };
         let config = TermConfig {
             scrolling_history: scrollback,
+            // Programs may ask for the kitty keyboard protocol (Shift+Enter
+            // and other modified keys reported unambiguously).
+            kitty_keyboard: true,
             ..Default::default()
         };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, proxy.clone())));
@@ -243,6 +249,8 @@ impl Session {
                 .spawn(move || sync_watchdog(&processor, &term, &proxy, &done))?
         };
 
+        let win32_input = Arc::new(AtomicBool::new(false));
+        let reader_win32_input = win32_input.clone();
         let reader_term = term.clone();
         let reader_pty_tx = pty_tx.clone();
         thread::Builder::new()
@@ -251,6 +259,7 @@ impl Session {
                 let mut buf = vec![0u8; 64 * 1024];
                 let (mut out, mut reply) = (Vec::new(), Vec::new());
                 let mut notifications = OscScanner::default();
+                let mut modes = ModeWatcher::default();
                 let mut found = Vec::new();
                 loop {
                     let n = match reader.read(&mut buf) {
@@ -264,6 +273,9 @@ impl Session {
                     };
                     tracing::trace!(target: "lohtty_term::pty", "{:?}", String::from_utf8_lossy(&buf[..n]));
                     notifications.scan(&buf[..n], &mut found);
+                    if let Some(on) = modes.scan(&buf[..n]) {
+                        reader_win32_input.store(on, Ordering::Relaxed);
+                    }
                     for note in found.drain(..) {
                         let _ = proxy.events.try_send(SessionEvent::Notification(note));
                     }
@@ -318,6 +330,7 @@ impl Session {
                 size: size_cell,
                 dirty,
                 program: shell.program.clone(),
+                win32_input,
             },
             events_rx,
         ))
@@ -326,6 +339,12 @@ impl Session {
     /// The program running in this session, as given to [`Session::spawn`].
     pub fn program(&self) -> &str {
         &self.program
+    }
+
+    /// Whether ConPTY asked for win32 input mode: keys can then be sent with
+    /// [`crate::input::encode_win32`].
+    pub fn win32_input_mode(&self) -> bool {
+        self.win32_input.load(Ordering::Relaxed)
     }
 
     pub fn term(&self) -> &Arc<FairMutex<Term<EventProxy>>> {

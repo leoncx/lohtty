@@ -10,6 +10,8 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 - Background opacity and blur
 - Ligatures, plus Nerd Font icons through font fallbacks
 - UTF-8, wide characters (CJK) and emoji
+- Kitty keyboard protocol, so Shift+Enter and other modified keys reach
+  programs such as coding agents
 - Box-drawing, block and Powerline characters drawn to join across cells, whatever the font
 - Mouse selection, clipboard, bracketed paste
 - Mouse reporting for terminal apps
@@ -179,6 +181,13 @@ send it to terminals they recognize. To turn it on:
 
 - **Other tools:** anything that sends OSC 9 (iTerm2's form), OSC 777
   `notify` or OSC 99 (kitty's), or rings the bell.
+
+**Shift+Enter** inserts a new line in agents' prompts instead of sending
+them. lohtty supports the kitty keyboard protocol (the level programs use to
+tell modified keys apart), and on Windows it also sends modified Enter the
+way Windows Terminal does, so programs that read console key events (Codex)
+see the Shift. Programs that use neither still get a plain Enter there: use
+Ctrl+J, or `\` then Enter, in Claude Code.
 
 ## Keyboard shortcuts
 
