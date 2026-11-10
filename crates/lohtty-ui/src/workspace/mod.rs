@@ -3,17 +3,19 @@
 mod render;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     AppContext, Bounds, Context, Entity, EntityId, Focusable, IsZero, KeyBinding, Pixels,
     Subscription, Task, Window, actions,
 };
 use lohtty_config::{Config, ConfigWatcher};
+use lohtty_term::notify::Notification;
 use lohtty_theme::Theme;
 
+use crate::notifier::{self, Notifier};
 use crate::pane_tree::{Axis, Direction, PaneTree, Removed, SplitId};
 use crate::settings::{SettingsDialog, SettingsEvent};
 use crate::terminal_view::{TerminalEvent, spawn_session};
@@ -48,6 +50,8 @@ actions!(
 
 const KEY_CONTEXT: &str = "Workspace";
 const APP_TITLE: &str = "lohtty";
+/// Shortest time between two desktop notifications from the same pane.
+const NOTIFY_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Default key bindings (close to Windows Terminal's on Windows and Linux).
 pub fn key_bindings() -> Vec<KeyBinding> {
@@ -144,8 +148,15 @@ pub struct Workspace {
     /// The open settings dialog, if any.
     settings: Option<(Entity<SettingsDialog>, Subscription)>,
     pane_subscriptions: HashMap<EntityId, Subscription>,
+    /// Panes that asked for attention since they were last focused.
+    attention: HashSet<EntityId>,
+    /// When each pane last showed a desktop notification, to limit them.
+    last_notified: HashMap<EntityId, Instant>,
+    notifier: Notifier,
     _watcher: Option<ConfigWatcher>,
     _reload: Task<()>,
+    _notification_clicks: Task<()>,
+    _activation: Subscription,
 }
 
 impl Workspace {
@@ -172,6 +183,29 @@ impl Workspace {
             }
         });
 
+        // A clicked notification brings its pane forward.
+        let (notifier, clicks) = Notifier::new();
+        let notification_clicks = cx.spawn_in(window, async move |this, cx| {
+            while let Ok(token) = clicks.recv().await {
+                let shown = this.update_in(cx, |this, window, cx| {
+                    this.show_pane(token, window, cx);
+                    window.activate_window();
+                });
+                if shown.is_err() {
+                    break;
+                }
+            }
+        });
+        // Coming back to the window clears the focused pane's attention.
+        let activation = cx.observe_window_activation(window, |this, window, cx| {
+            if window.is_window_active()
+                && let Some(tab) = this.tabs.get(this.active_tab)
+                && this.attention.remove(&tab.active.entity_id())
+            {
+                cx.notify();
+            }
+        });
+
         let mut this = Self {
             config,
             theme,
@@ -182,8 +216,13 @@ impl Workspace {
             dragging: None,
             settings: None,
             pane_subscriptions: HashMap::new(),
+            attention: HashSet::new(),
+            last_notified: HashMap::new(),
+            notifier,
             _watcher: watcher,
             _reload: reload,
+            _notification_clicks: notification_clicks,
+            _activation: activation,
         };
         this.new_tab(&NewTab, window, cx);
         this
@@ -226,11 +265,83 @@ impl Workspace {
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.panes.contains(pane)) {
                     tab.active = pane.clone();
                 }
+                self.attention.remove(&pane.entity_id());
                 self.update_window_title(window, cx);
                 cx.notify();
             }
             TerminalEvent::Exited => self.close_pane_entity(pane, window, cx),
+            TerminalEvent::Attention(note) => {
+                self.request_attention(pane, note.as_ref(), window, cx)
+            }
         }
+    }
+
+    /// A pane asked for attention. Nothing happens if the user is looking at
+    /// it; otherwise its tab is marked, and when lohtty isn't in front the
+    /// taskbar button flashes and a desktop notification shows the message.
+    fn request_attention(
+        &mut self,
+        pane: &Pane,
+        note: Option<&Notification>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let active = window.is_window_active();
+        if active && pane.focus_handle(cx).is_focused(window) {
+            return;
+        }
+        self.attention.insert(pane.entity_id());
+        cx.notify();
+        if active {
+            return;
+        }
+        notifier::flash(window);
+        if !self.config.notifications.desktop {
+            return;
+        }
+        // At most one notification per pane every few seconds (bells repeat).
+        let now = Instant::now();
+        if self
+            .last_notified
+            .get(&pane.entity_id())
+            .is_some_and(|at| now.duration_since(*at) < NOTIFY_INTERVAL)
+        {
+            return;
+        }
+        self.last_notified.insert(pane.entity_id(), now);
+        let pane_title = pane.read(cx).title().to_owned();
+        let (title, body) = match note {
+            Some(note) => (
+                note.title.clone().unwrap_or_else(|| pane_title.clone()),
+                note.body.clone(),
+            ),
+            None => (pane_title, "Needs your attention".to_owned()),
+        };
+        self.notifier
+            .notify(&title, &body, pane.entity_id().as_u64());
+    }
+
+    /// Brings the pane with this entity id forward: its tab, then the pane.
+    fn show_pane(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((index, pane)) = self.tabs.iter().enumerate().find_map(|(i, tab)| {
+            tab.panes
+                .panes()
+                .into_iter()
+                .find(|p| p.entity_id().as_u64() == id)
+                .map(|p| (i, p))
+        }) else {
+            return;
+        };
+        self.tabs[index].active = pane;
+        self.activate_tab(index, window, cx);
+    }
+
+    /// Whether a tab has a pane waiting for the user.
+    fn tab_needs_attention(&self, tab: &Tab) -> bool {
+        tab.panes
+            .panes()
+            .iter()
+            .any(|p| self.attention.contains(&p.entity_id()))
     }
 
     fn new_tab(&mut self, _: &NewTab, window: &mut Window, cx: &mut Context<Self>) {
@@ -305,6 +416,8 @@ impl Workspace {
             Removed::NotFound => {}
             Removed::Yes => {
                 self.pane_subscriptions.remove(&pane.entity_id());
+                self.attention.remove(&pane.entity_id());
+                self.last_notified.remove(&pane.entity_id());
                 if &tab.active == pane {
                     tab.active = successor.unwrap_or_else(|| tab.panes.panes()[0].clone());
                 }

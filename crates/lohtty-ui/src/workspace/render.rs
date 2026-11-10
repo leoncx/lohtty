@@ -83,6 +83,16 @@ impl Workspace {
         let muted = to_rgba(mix(t.foreground, t.background, 0.45));
         let accent = to_rgba(t.ansi[4]);
         let single = CUSTOM_TITLEBAR && self.tabs.len() == 1;
+        // A dot before the title of a tab with a pane waiting for the user.
+        let attention_dot = |show: bool| {
+            show.then(|| {
+                div()
+                    .flex_none()
+                    .size(px(7.0))
+                    .rounded_full()
+                    .bg(to_rgba(t.ansi[3]))
+            })
+        };
 
         let tabs = div()
             .flex()
@@ -99,6 +109,7 @@ impl Workspace {
                     .map(|(i, tab)| {
                         let active = i == self.active_tab;
                         let title = tab.active.read(cx).title().to_owned();
+                        let waiting = self.tab_needs_attention(tab);
                         div()
                             .id(("tab", i))
                             .flex()
@@ -125,6 +136,7 @@ impl Workspace {
                                     this.close_tab_at(i, window, cx)
                                 }),
                             )
+                            .children(attention_dot(waiting))
                             .child(div().flex_1().min_w_0().truncate().child(title))
                             .child(
                                 div()
@@ -159,6 +171,7 @@ impl Workspace {
         // side stay clickable.
         let centered_title = single.then(|| {
             let title = self.tabs[0].active.read(cx).title().to_owned();
+            let waiting = self.tab_needs_attention(&self.tabs[0]);
             div()
                 .absolute()
                 .top_0()
@@ -167,6 +180,8 @@ impl Workspace {
                 .flex()
                 .items_center()
                 .justify_center()
+                .gap_2()
+                .children(attention_dot(waiting))
                 .child(
                     div()
                         .max_w(relative(0.5))

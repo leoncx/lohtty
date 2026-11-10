@@ -2,6 +2,7 @@
 
 mod colors;
 mod fonts;
+mod notifier;
 mod paint_now;
 mod pane_tree;
 mod perf;

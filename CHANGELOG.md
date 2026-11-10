@@ -22,6 +22,10 @@ version and changelog section, and uses that section as the release notes.
 - Themes (Tokyo Night by default) and live config reload.
 - Background opacity and blur, ligatures, Nerd Font icon fallbacks.
 - Mouse selection, clipboard, bracketed paste, mouse reporting, OSC 8 links.
+- Attention alerts: a program that rings the bell or sends a notification
+  (OSC 9, 777, 99), such as a coding agent that finished or waits for input,
+  marks its tab; on Windows, when lohtty isn't in front, the taskbar button
+  flashes and a desktop notification opens that pane when clicked.
 - Kitty graphics protocol: PNG and raw images, anchored to scrollback. Works
   with `kitty icat`, timg, chafa and yazi. Images can be deleted by id,
   number, z-index, id range, cell, cursor, column or row. Unicode placeholders

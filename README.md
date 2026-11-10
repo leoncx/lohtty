@@ -14,6 +14,8 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 - Mouse selection, clipboard, bracketed paste
 - Mouse reporting for terminal apps
 - OSC 8 hyperlinks
+- Attention alerts for coding agents and other programs: a tab mark, and on
+  Windows a taskbar flash and desktop notification when lohtty isn't in front
 - Images through the kitty graphics protocol (PNG, RGB/RGBA; direct, file and
   temporary-file transfer)
 - PowerShell by default, any shell configurable
@@ -128,6 +130,9 @@ height = 650
 
 [graphics]
 kitty = true               # kitty graphics protocol (new tabs and panes)
+
+[notifications]
+desktop = true             # desktop notifications when lohtty isn't in front (Windows)
 ```
 
 ### Themes
@@ -146,6 +151,34 @@ ansi = [
   "#414868", "#ff899d", "#9fe044", "#faba4a", "#8db0ff", "#c7a9ff", "#a4daff", "#c0caf5",
 ]
 ```
+
+## Coding agents and attention alerts
+
+When a program rings the bell or asks for a notification (OSC 9, OSC 777 or
+OSC 99), lohtty lets you know, unless you're already looking at that pane:
+
+- The tab gets a yellow dot until you visit the pane.
+- If lohtty isn't in front (Windows), its taskbar button flashes and a desktop
+  notification shows the message. Clicking it brings you to that tab and pane.
+  Each pane shows at most one notification every 5 seconds. Turn them off
+  with `notifications.desktop = false`.
+
+Coding agents use this to say they finished or wait for you, but most only
+send it to terminals they recognize. To turn it on:
+
+- **Claude Code:** in `~/.claude/settings.json`, set
+  `"preferredNotifChannel": "iterm2"` (sends the message), or
+  `"terminal_bell"` (bell only).
+- **Codex:** in `~/.codex/config.toml`:
+
+  ```toml
+  [tui]
+  notifications = true
+  notification_method = "osc9"
+  ```
+
+- **Other tools:** anything that sends OSC 9 (iTerm2's form), OSC 777
+  `notify` or OSC 99 (kitty's), or rings the bell.
 
 ## Keyboard shortcuts
 

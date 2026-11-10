@@ -32,6 +32,7 @@ pub struct Config {
     pub theme: String,
     pub scrollback: usize,
     pub graphics: GraphicsConfig,
+    pub notifications: NotificationsConfig,
 }
 
 impl Default for Config {
@@ -43,7 +44,23 @@ impl Default for Config {
             theme: "tokyo-night".into(),
             scrollback: 10_000,
             graphics: GraphicsConfig::default(),
+            notifications: NotificationsConfig::default(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct NotificationsConfig {
+    /// Desktop notifications when a program in an unfocused window asks for
+    /// attention (bell, or OSC 9 / 777 / 99). The tab mark and the taskbar
+    /// flash don't depend on it.
+    pub desktop: bool,
+}
+
+impl Default for NotificationsConfig {
+    fn default() -> Self {
+        Self { desktop: true }
     }
 }
 

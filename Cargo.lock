@@ -3145,6 +3145,7 @@ dependencies = [
  "lohtty-theme",
  "raw-window-handle",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

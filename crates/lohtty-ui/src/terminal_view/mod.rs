@@ -21,6 +21,7 @@ use gpui::{
     actions, canvas, div, prelude::*, px,
 };
 use lohtty_config::{Config, FontConfig};
+use lohtty_term::notify::Notification;
 use lohtty_term::{PassThrough, Session, SessionEvent, TermSize, resolve_shell};
 use lohtty_theme::Theme;
 
@@ -43,13 +44,16 @@ const MIN_OUTPUT_FRAME: Duration = Duration::from_millis(12);
 const ECHO_WINDOW: Duration = Duration::from_millis(250);
 
 /// Events a terminal view reports to its container (tab / workspace).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
     TitleChanged,
     /// The view gained keyboard focus (it becomes its tab's active pane).
     Focused,
     /// The shell exited; the pane should close.
     Exited,
+    /// A program rang the bell (`None`) or asked for a notification: it
+    /// may need the user (an agent finished or waits for input).
+    Attention(Option<Notification>),
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -332,7 +336,8 @@ impl TerminalView {
             }
             SessionEvent::Title(title) => self.set_title(title, cx),
             SessionEvent::ResetTitle => self.set_title(self.default_title.clone(), cx),
-            SessionEvent::Bell => {}
+            SessionEvent::Bell => cx.emit(TerminalEvent::Attention(None)),
+            SessionEvent::Notification(note) => cx.emit(TerminalEvent::Attention(Some(note))),
             SessionEvent::ClipboardStore(text) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(text))
             }

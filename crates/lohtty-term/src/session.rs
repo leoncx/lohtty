@@ -14,6 +14,7 @@ use alacritty_terminal::vte::ansi::{Processor, Rgb, StdSyncHandler};
 use anyhow::Context as _;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
+use crate::notify::{Notification, OscScanner};
 use crate::{OutputFilter, ShellSpec};
 
 /// Grid size in cells plus the cell size in pixels (needed by some escape sequences).
@@ -70,6 +71,8 @@ pub enum SessionEvent {
     /// The application asked for a palette color (OSC 4/10/11/12). The UI resolves
     /// it against the theme and writes `formatter(rgb)` back with [`Session::write`].
     ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
+    /// A program asked for a desktop notification (OSC 9, 777 or 99).
+    Notification(Notification),
     /// The shell exited or the PTY closed.
     Exit,
 }
@@ -247,6 +250,8 @@ impl Session {
             .spawn(move || {
                 let mut buf = vec![0u8; 64 * 1024];
                 let (mut out, mut reply) = (Vec::new(), Vec::new());
+                let mut notifications = OscScanner::default();
+                let mut found = Vec::new();
                 loop {
                     let n = match reader.read(&mut buf) {
                         Ok(0) => break,
@@ -258,6 +263,10 @@ impl Session {
                         }
                     };
                     tracing::trace!(target: "lohtty_term::pty", "{:?}", String::from_utf8_lossy(&buf[..n]));
+                    notifications.scan(&buf[..n], &mut found);
+                    for note in found.drain(..) {
+                        let _ = proxy.events.try_send(SessionEvent::Notification(note));
+                    }
                     out.clear();
                     reply.clear();
                     filter.filter(&buf[..n], &mut out, &mut reply);
