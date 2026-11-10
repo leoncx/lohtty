@@ -101,7 +101,7 @@ impl EventListener for EventProxy {
             Event::ClipboardStore(_, s) => SessionEvent::ClipboardStore(s),
             Event::ColorRequest(i, f) => SessionEvent::ColorRequest(i, f),
             Event::PtyWrite(s) => {
-                let _ = self.pty_tx.send(s.into_bytes());
+                let _ = self.pty_tx.send(device_attributes(s).into_bytes());
                 return;
             }
             Event::TextAreaSizeRequest(f) => {
@@ -116,6 +116,18 @@ impl EventListener for EventProxy {
             }
         };
         let _ = self.events.try_send(ev);
+    }
+}
+
+/// alacritty_terminal answers Primary Device Attributes (`CSI c`) with
+/// `CSI ? 6 c` (a VT102). kitty's own client (`kitty icat`) ignores a reply
+/// that short and waits forever, so report a VT220 with ANSI color
+/// (`CSI ? 62 ; 22 c`), a form clients generally expect.
+fn device_attributes(reply: String) -> String {
+    if reply == "\x1b[?6c" {
+        "\x1b[?62;22c".to_owned()
+    } else {
+        reply
     }
 }
 
@@ -374,5 +386,18 @@ fn sync_watchdog(
 impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.killer.kill();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::device_attributes;
+
+    #[test]
+    fn primary_device_attributes_are_long_enough_for_kitty_clients() {
+        // kitty icat ignores a DA1 reply of three characters or fewer.
+        assert_eq!(device_attributes("\x1b[?6c".into()), "\x1b[?62;22c");
+        // Other replies pass unchanged.
+        assert_eq!(device_attributes("\x1b[>0;0;1c".into()), "\x1b[>0;0;1c");
     }
 }

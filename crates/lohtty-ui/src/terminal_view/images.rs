@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{Bounds, ContentMask, Pixels, RenderImage, Window, point, px, size};
-use lohtty_term::kitty::{Graphics, Image, Placement, parse_marker};
+use lohtty_term::kitty::{Graphics, Image, parse_marker};
 
 use super::CellMetrics;
 
@@ -30,13 +30,11 @@ pub(super) fn marker(uri: &str, row: usize, col: usize) -> Option<Marker> {
     })
 }
 
-/// (stored image, source rectangle): one converted texture each.
-type Key = (u64, [u32; 4]);
-
 /// Images converted for gpui, kept while they stay on screen.
 #[derive(Default)]
 pub(super) struct ImageCache {
-    entries: HashMap<Key, (Arc<RenderImage>, u64)>,
+    /// Textures by image serial, with the frame that last used them.
+    entries: HashMap<u64, (Arc<RenderImage>, u64)>,
     frame: u64,
 }
 
@@ -108,7 +106,10 @@ impl ImageLayer {
             let Some((p, image)) = self.graphics.lookup(placement) else {
                 continue;
             };
-            let Some(texture) = cache.texture(&image, &p, frame_no) else {
+            if p.src_w == 0 || p.src_h == 0 {
+                continue;
+            }
+            let Some(texture) = cache.texture(&image, frame_no) else {
                 continue;
             };
             let cell = |col: f32, row: f32| {
@@ -129,17 +130,36 @@ impl ImageLayer {
                 size(px(p.src_w as f32), px(p.src_h as f32))
             };
             let dest = Bounds::new(origin, dest);
+            // The whole image is drawn, scaled and shifted so the source
+            // rectangle lands on `dest`, and clipped to it. Sampling then
+            // continues across the rectangle's edges, so an image cut into
+            // tiles (yazi places one per cell) shows no seams.
+            let scale_x = f32::from(dest.size.width) / p.src_w as f32;
+            let scale_y = f32::from(dest.size.height) / p.src_h as f32;
+            let whole = Bounds::new(
+                point(
+                    dest.origin.x - px(p.src_x as f32 * scale_x),
+                    dest.origin.y - px(p.src_y as f32 * scale_y),
+                ),
+                size(
+                    px(image.width as f32 * scale_x),
+                    px(image.height as f32 * scale_y),
+                ),
+            );
             // Only the rows whose markers are on screen are shown.
             let clip_top = cell(0.0, first.row as f32).y;
             let clip_bottom = cell(0.0, last_row as f32 + 1.0).y;
             let clip = Bounds::from_corners(
-                point(dest.origin.x, clip_top),
-                point(dest.origin.x + dest.size.width, clip_bottom),
+                point(dest.origin.x, clip_top.max(dest.origin.y)),
+                point(
+                    dest.origin.x + dest.size.width,
+                    clip_bottom.min(dest.origin.y + dest.size.height),
+                ),
             )
             .intersect(&bounds);
             draws.push(ImageDraw {
                 image: texture,
-                bounds: dest,
+                bounds: whole,
                 clip,
                 below_text: p.z < 0,
             });
@@ -159,29 +179,24 @@ impl ImageLayer {
 }
 
 impl ImageCache {
-    /// The gpui texture for a placement's source rectangle, converted once.
-    fn texture(&mut self, image: &Image, p: &Placement, frame: u64) -> Option<Arc<RenderImage>> {
-        let key = (image.serial, [p.src_x, p.src_y, p.src_w, p.src_h]);
-        if let Some((texture, used)) = self.entries.get_mut(&key) {
+    /// The gpui texture of an image, converted once and shared by all its
+    /// placements.
+    fn texture(&mut self, image: &Image, frame: u64) -> Option<Arc<RenderImage>> {
+        if let Some((texture, used)) = self.entries.get_mut(&image.serial) {
             *used = frame;
             return Some(texture.clone());
         }
-        if p.src_w == 0 || p.src_h == 0 {
-            return None;
-        }
-        // Crop to the source rectangle and convert RGBA to gpui's BGRA.
-        let stride = image.width as usize * 4;
-        let mut bgra = Vec::with_capacity(p.src_w as usize * p.src_h as usize * 4);
-        for y in p.src_y..p.src_y + p.src_h {
-            let start = y as usize * stride + p.src_x as usize * 4;
-            let row = image.rgba.get(start..start + p.src_w as usize * 4)?;
-            for px in row.as_chunks::<4>().0 {
-                bgra.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
-            }
-        }
-        let buffer = image::RgbaImage::from_raw(p.src_w, p.src_h, bgra)?;
+        // Convert RGBA to gpui's BGRA.
+        let bgra: Vec<u8> = image
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|px| [px[2], px[1], px[0], px[3]])
+            .collect();
+        let buffer = image::RgbaImage::from_raw(image.width, image.height, bgra)?;
         let texture = Arc::new(RenderImage::new([image::Frame::new(buffer)]));
-        self.entries.insert(key, (texture.clone(), frame));
+        self.entries.insert(image.serial, (texture.clone(), frame));
         Some(texture)
     }
 }

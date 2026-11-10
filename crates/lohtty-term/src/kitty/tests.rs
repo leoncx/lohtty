@@ -102,6 +102,32 @@ fn chunked_transmission_is_reassembled() {
 }
 
 #[test]
+fn chunks_padded_one_by_one_are_decoded() {
+    // chafa pads every chunk, so '=' appears in the middle of the data.
+    let g = Graphics::new();
+    g.set_cell_size(1, 1);
+    let pixels = rgba(3, 2);
+    let (a, b) = pixels.split_at(5); // 5 bytes: padded with '='
+    let mut input = format!("\x1b_Ga=t,i=7,s=3,v=2,m=1;{}\x1b\\", STANDARD.encode(a)).into_bytes();
+    input.extend(format!("\x1b_Gm=0;{}\x1b\\", STANDARD.encode(b)).into_bytes());
+    assert!(STANDARD.encode(a).ends_with('='));
+    let (_, reply) = run(&g, &input, false);
+    assert_eq!(reply, b"\x1b_Gi=7;OK\x1b\\");
+    assert_eq!(&g.state.lock().unwrap().images[&7].rgba[..], &pixels[..]);
+
+    // Unused bits set in a piece's last character are ignored, as in kitty:
+    // "AAE=" and "AAF=" both decode to [0, 1].
+    let mut input = b"\x1b_Ga=t,i=8,f=24,s=1,v=1,m=1;AAF=\x1b\\".to_vec();
+    input.extend(b"\x1b_Gm=0;AA==\x1b\\");
+    let (_, reply) = run(&g, &input, false);
+    assert_eq!(reply, b"\x1b_Gi=8;OK\x1b\\");
+    assert_eq!(
+        &g.state.lock().unwrap().images[&8].rgba[..],
+        &[0, 1, 0, 255][..]
+    );
+}
+
+#[test]
 fn png_and_rgb_decode() {
     let g = Graphics::new();
     let mut png = Vec::new();

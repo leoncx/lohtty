@@ -37,20 +37,45 @@ pub(super) fn decode(cmd: &Command, payload: &[u8]) -> Result<Decoded, String> {
 }
 
 fn base64_decode(payload: &[u8]) -> Result<Vec<u8>, String> {
-    // Chunks are multiples of 4 characters except the last, so padding can
-    // only end the data; tolerate it missing.
+    // A chunked transmission is the chunks' payloads joined. Some clients
+    // (chafa) pad every chunk, so padding can appear mid-stream: decode each
+    // padded piece on its own, as kitty decodes chunk by chunk. Padding is
+    // optional at the very end, and like kitty, unused bits in the last
+    // character of a piece may be set.
     let engine = GeneralPurpose::new(
         &alphabet::STANDARD,
-        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+        GeneralPurposeConfig::new()
+            .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+            .with_decode_allow_trailing_bits(true),
     );
     let clean: Vec<u8> = payload
         .iter()
         .copied()
         .filter(|c| !c.is_ascii_whitespace())
         .collect();
-    engine
-        .decode(clean)
-        .map_err(|e| format!("EINVAL:bad base64 data: {e}"))
+    let mut out = Vec::with_capacity(clean.len() / 4 * 3);
+    let mut decode = |piece: &[u8]| {
+        engine
+            .decode_vec(piece, &mut out)
+            .map_err(|e| format!("EINVAL:bad base64 data: {e}"))
+    };
+    // Pieces end after each run of '='.
+    let (mut start, mut i) = (0, 0);
+    while i < clean.len() {
+        if clean[i] == b'=' {
+            while i < clean.len() && clean[i] == b'=' {
+                i += 1;
+            }
+            decode(&clean[start..i])?;
+            start = i;
+        } else {
+            i += 1;
+        }
+    }
+    if start < clean.len() {
+        decode(&clean[start..])?;
+    }
+    Ok(out)
 }
 
 fn read_file(cmd: &Command, path: &[u8]) -> Result<Vec<u8>, String> {
@@ -80,14 +105,32 @@ fn read_file(cmd: &Command, path: &[u8]) -> Result<Vec<u8>, String> {
         .read_to_end(&mut data)
         .map_err(|e| format!("EBADF:{e}"))?;
     // Temporary files are deleted after reading, but only ones that look
-    // like they were made for this purpose (as kitty requires).
+    // like they were made for this purpose, in a temporary directory (as
+    // kitty requires).
     if cmd.medium == b't'
         && path.to_string_lossy().contains("tty-graphics-protocol")
-        && path.starts_with(std::env::temp_dir())
+        && in_temp_dir(path)
     {
         let _ = std::fs::remove_file(path);
     }
     Ok(data)
+}
+
+/// Whether `path` is inside a temporary directory: the system's (`$TMPDIR`
+/// on Unix) or, on Unix, `/tmp` and `/dev/shm`, where clients such as
+/// `kitty icat` create their files. Paths are resolved first, so `..` or a
+/// symlink can't point outside.
+fn in_temp_dir(path: &std::path::Path) -> bool {
+    let Ok(path) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    let mut dirs = vec![std::env::temp_dir()];
+    if cfg!(unix) {
+        dirs.extend(["/tmp".into(), "/dev/shm".into()]);
+    }
+    dirs.into_iter()
+        .filter_map(|d| std::fs::canonicalize(d).ok())
+        .any(|d| path.starts_with(d))
 }
 
 fn inflate(data: &[u8]) -> Result<Vec<u8>, String> {

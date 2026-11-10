@@ -365,9 +365,11 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// The fonts and cell metrics for the current config, computed once.
+    /// The fonts and cell metrics for the current config and display scale,
+    /// computed once.
     fn font_set(&mut self, window: &mut Window) -> FontSet {
-        if let Some(set) = &self.fonts {
+        let scale = window.scale_factor();
+        if let Some(set) = self.fonts.as_ref().filter(|set| set.scale == scale) {
             return set.clone();
         }
         let fallbacks = fonts::fallbacks(&self.font, window);
@@ -403,17 +405,22 @@ impl TerminalView {
         let font_size = px(self.font.size);
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&fonts[0]);
-        let cell_width = text_system
+        let advance = text_system
             .advance(font_id, font_size, 'm')
             .map(|s| s.width)
             .unwrap_or(font_size * 0.6);
+        // Cells are whole device pixels, as in other terminals: images that
+        // clients cut into cell-sized tiles (yazi) then fit their cells
+        // exactly, and every cell edge falls on a pixel.
+        let whole_pixels = |v: Pixels| px((f32::from(v) * scale).round().max(1.0) / scale);
         let set = FontSet {
             fonts,
             metrics: CellMetrics {
                 font_size,
-                cell_width,
-                line_height: (font_size * 1.25).round(),
+                cell_width: whole_pixels(advance),
+                line_height: whole_pixels(font_size * 1.25),
             },
+            scale,
         };
         self.fonts = Some(set.clone());
         set
@@ -431,6 +438,8 @@ impl TerminalView {
 struct FontSet {
     fonts: [Font; 4],
     metrics: CellMetrics,
+    /// The display scale the metrics were computed for.
+    scale: f32,
 }
 
 impl Focusable for TerminalView {
@@ -441,7 +450,7 @@ impl Focusable for TerminalView {
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let FontSet { fonts, metrics } = self.font_set(window);
+        let FontSet { fonts, metrics, .. } = self.font_set(window);
         self.paint_now = PaintNow::for_window(window);
         let painter = FramePainter {
             session: self.session.clone(),
