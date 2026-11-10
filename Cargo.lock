@@ -3138,6 +3138,7 @@ dependencies = [
  "lohtty-config",
  "lohtty-term",
  "lohtty-theme",
+ "raw-window-handle",
  "tracing",
 ]
 

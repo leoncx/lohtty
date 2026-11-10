@@ -312,9 +312,21 @@ Each milestone ends with a runnable build.
   - **Symbolizing:** samply showed placeholder names (`fun_*`) for `lohtty.exe`. Symbolize the profile's addresses against `target/profiling/lohtty.pdb` with dbghelp (`SymFromAddrW`, without `SYMOPT_DEFERRED_LOADS`).
 - **License:** Apache-2.0, chosen by the owner. The text is in `LICENSE`, it is set in `Cargo.toml`, and it ships in the zip.
 
+- **Input latency** (keystroke to screen, Typometer style): `scripts/latency.ps1` sends a real `W` key event, then polls a few screen pixels where the character appears (GDI `BitBlt`, which returns about once per desktop composition, so samples are quantized to ~6 ms at 165 Hz). Same shell in every terminal: pwsh 7.6 + oh-my-posh + PSReadLine; 80 samples per run, two runs each, release build:
+
+  | | median | p90 |
+  |---|---|---|
+  | lohtty before | 12.2 ms | 13.5 ms |
+  | lohtty now | 6.4–7.0 ms | 12 ms |
+  | Windows Terminal | 6.7 ms | 12.3 ms |
+  | WezTerm | 42.7 ms | 48.3 ms |
+
+  - **Breakdown inside lohtty** (`LOHTTY_LOG=lohtty_ui::latency=debug` logs each keystroke): the shell's echo arrives about 0.8 ms after the key is written. The frame was then painted 0–6 ms later, because gpui on Windows only draws on WM_PAINT, which its vsync thread sends right after each composition (`DwmFlush`). The frame then missed the composition it could have caught.
+  - **Fix:** `PaintNow` calls `InvalidateRect` on the window for output arriving within 250 ms of user input (`ECHO_WINDOW`). gpui then draws and presents as soon as the UI thread is free, about 0.5 ms after the echo. Streaming output still repaints on the vsync cadence, so flood CPU is unchanged (within run-to-run noise).
+  - Remaining time is outside lohtty: key delivery, presenting, and the desktop composition. Windows Terminal has the same floor.
+
 *Open items (blocking a v1.0 tag):*
 - **vttest/esctest:** these need a Unix environment. The dev machine's WSL only has Rancher Desktop's internal distros. Install a regular distro (for example `wsl --install Ubuntu`) and then run `vttest` inside lohtty.
-- **Input latency:** not measured yet. It needs a high-speed camera or a tool such as Typometer.
 - **Later:** an MSI installer, a macOS `.app` and a Linux AppImage.
 
 **M7 — Kitty graphics protocol** *(optional, last)*

@@ -94,6 +94,8 @@ impl TerminalView {
         self.session.term().lock().selection = None;
         self.session.scroll_to_bottom();
         self.session.write(bytes);
+        self.last_input = Some(std::time::Instant::now());
+        crate::perf::input_sent();
         cx.notify();
     }
 

@@ -1,6 +1,7 @@
 //! gpui views: Workspace, TabBar, PaneGroup, TerminalView, SearchBar.
 
 mod colors;
+mod paint_now;
 mod pane_tree;
 mod perf;
 mod search_bar;

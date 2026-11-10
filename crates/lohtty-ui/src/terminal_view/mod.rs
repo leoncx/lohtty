@@ -23,6 +23,7 @@ use lohtty_term::{PassThrough, Session, SessionEvent, TermSize, resolve_shell};
 use lohtty_theme::Theme;
 
 use crate::colors;
+use crate::paint_now::PaintNow;
 use paint::FramePainter;
 
 actions!(terminal, [Copy, Paste, Search]);
@@ -33,6 +34,10 @@ const KEY_CONTEXT: &str = "Terminal";
 /// The repaint itself lands on the next vsync, so 12 ms gives roughly 50-60
 /// fps on 60-165 Hz displays: a screen changing faster can't be read anyway.
 const MIN_OUTPUT_FRAME: Duration = Duration::from_millis(12);
+
+/// Output arriving this soon after user input is treated as its echo and
+/// painted immediately (see [`PaintNow`]); other output waits for vsync.
+const ECHO_WINDOW: Duration = Duration::from_millis(250);
 
 /// Events a terminal view reports to its container (tab / workspace).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +146,10 @@ pub struct TerminalView {
     /// already scheduled (see [`TerminalView::output_frame`]).
     last_output_frame: Option<Instant>,
     output_frame_pending: bool,
+    /// Repaints immediately (set on each render, once the window is known).
+    paint_now: PaintNow,
+    /// When input was last sent to the shell.
+    last_input: Option<Instant>,
     _events: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -212,6 +221,8 @@ impl TerminalView {
             search: None,
             last_output_frame: None,
             output_frame_pending: false,
+            paint_now: PaintNow::default(),
+            last_input: None,
             _events: task,
             _subscriptions: subscriptions,
         }
@@ -257,6 +268,11 @@ impl TerminalView {
             _ => {
                 self.last_output_frame = Some(now);
                 cx.notify();
+                // A keystroke's echo: show it without waiting for the next
+                // vsync tick. Streaming output keeps the vsync pacing.
+                if self.last_input.is_some_and(|t| now - t < ECHO_WINDOW) {
+                    self.paint_now.request();
+                }
             }
         }
     }
@@ -274,7 +290,10 @@ impl TerminalView {
 
     fn handle_event(&mut self, event: SessionEvent, _window: &mut Window, cx: &mut Context<Self>) {
         match event {
-            SessionEvent::Wakeup => self.output_frame(cx),
+            SessionEvent::Wakeup => {
+                crate::perf::output_received();
+                self.output_frame(cx)
+            }
             SessionEvent::Title(title) => self.set_title(title, cx),
             SessionEvent::ResetTitle => self.set_title(self.default_title.clone(), cx),
             SessionEvent::Bell => {}
@@ -408,6 +427,7 @@ impl Focusable for TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let FontSet { fonts, metrics } = self.font_set(window);
+        self.paint_now = PaintNow::for_window(window);
         let painter = FramePainter {
             session: self.session.clone(),
             theme: self.theme.clone(),

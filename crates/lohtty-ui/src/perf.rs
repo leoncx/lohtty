@@ -76,3 +76,62 @@ pub fn record_paint(paint: Duration) {
 fn enabled() -> bool {
     tracing::enabled!(target: "lohtty_ui::perf", tracing::Level::DEBUG)
 }
+
+/// Typing latency inside lohtty, logged per keystroke at debug level under
+/// `lohtty_ui::latency`: input sent to the shell → first output back (the
+/// shell's echo, outside lohtty) → the frame showing it painted.
+#[derive(Default)]
+struct Latency {
+    sent: Option<Instant>,
+    echoed: Option<Instant>,
+}
+
+thread_local! {
+    static LATENCY: RefCell<Latency> = RefCell::default();
+}
+
+fn latency_enabled() -> bool {
+    tracing::enabled!(target: "lohtty_ui::latency", tracing::Level::DEBUG)
+}
+
+/// User input was written to the PTY.
+pub fn input_sent() {
+    if latency_enabled() {
+        LATENCY.with_borrow_mut(|l| {
+            *l = Latency {
+                sent: Some(Instant::now()),
+                echoed: None,
+            }
+        });
+    }
+}
+
+/// The UI thread received an output wakeup.
+pub fn output_received() {
+    if latency_enabled() {
+        LATENCY.with_borrow_mut(|l| {
+            if l.sent.is_some() && l.echoed.is_none() {
+                l.echoed = Some(Instant::now());
+            }
+        });
+    }
+}
+
+/// A frame finished painting (recorded into gpui's scene; presenting follows).
+pub fn frame_painted() {
+    if latency_enabled() {
+        LATENCY.with_borrow_mut(|l| {
+            if let (Some(sent), Some(echoed)) = (l.sent, l.echoed) {
+                let now = Instant::now();
+                tracing::debug!(
+                    target: "lohtty_ui::latency",
+                    echo_ms = format_args!("{:.2}", (echoed - sent).as_secs_f64() * 1e3),
+                    to_paint_ms = format_args!("{:.2}", (now - echoed).as_secs_f64() * 1e3),
+                    total_ms = format_args!("{:.2}", (now - sent).as_secs_f64() * 1e3),
+                    "keystroke"
+                );
+                *l = Latency::default();
+            }
+        });
+    }
+}

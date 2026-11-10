@@ -615,6 +615,7 @@ impl Frame {
         let started = Instant::now();
         self.paint_inner(window, cx);
         perf::record_paint(started.elapsed());
+        perf::frame_painted();
     }
 
     fn paint_inner(self, window: &mut Window, cx: &mut App) {
