@@ -72,6 +72,8 @@ impl Workspace {
 
     /// The tab bar. With [`CUSTOM_TITLEBAR`] it is also the window's title bar:
     /// empty space drags the window and the caption buttons sit on the right.
+    /// There, a single tab shows as the window title, centered, and the tab
+    /// strip appears once a second tab opens.
     fn render_tab_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = &self.theme;
         let bar = self.translucent(to_rgba(mix(t.background, t.foreground, 0.06)));
@@ -80,6 +82,7 @@ impl Workspace {
         let fg = to_rgba(t.foreground);
         let muted = to_rgba(mix(t.foreground, t.background, 0.45));
         let accent = to_rgba(t.ansi[4]);
+        let single = CUSTOM_TITLEBAR && self.tabs.len() == 1;
 
         let tabs = div()
             .flex()
@@ -88,48 +91,56 @@ impl Workspace {
             .flex_shrink()
             .overflow_hidden()
             .h_full()
-            .children(self.tabs.iter().enumerate().map(|(i, tab)| {
-                let active = i == self.active_tab;
-                let title = tab.active.read(cx).title().to_owned();
-                div()
-                    .id(("tab", i))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_1()
-                    .pl_3()
-                    .pr_1()
-                    .h_full()
-                    .min_w(px(90.0))
-                    .max_w(px(220.0))
-                    .flex_shrink()
-                    .border_b_2()
-                    .border_color(if active { accent } else { bar })
-                    .bg(if active { active_bg } else { bar })
-                    .text_color(if active { fg } else { muted })
-                    .when(!active, |el| el.hover(|s| s.bg(hover)))
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.activate_tab(i, window, cx)),
-                    )
-                    .on_mouse_up(
-                        MouseButton::Middle,
-                        cx.listener(move |this, _, window, cx| this.close_tab_at(i, window, cx)),
-                    )
-                    .child(div().flex_1().min_w_0().truncate().child(title))
-                    .child(
+            .children(
+                self.tabs
+                    .iter()
+                    .enumerate()
+                    .filter(|_| !single)
+                    .map(|(i, tab)| {
+                        let active = i == self.active_tab;
+                        let title = tab.active.read(cx).title().to_owned();
                         div()
-                            .id(("close-tab", i))
-                            .px_1()
-                            .rounded_sm()
-                            .text_color(muted)
-                            .hover(|s| s.bg(hover).text_color(fg))
-                            .child("×")
+                            .id(("tab", i))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .pl_3()
+                            .pr_1()
+                            .h_full()
+                            .min_w(px(90.0))
+                            .max_w(px(220.0))
+                            .flex_shrink()
+                            .border_b_2()
+                            .border_color(if active { accent } else { bar })
+                            .bg(if active { active_bg } else { bar })
+                            .text_color(if active { fg } else { muted })
+                            .when(!active, |el| el.hover(|s| s.bg(hover)))
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                cx.stop_propagation();
-                                this.close_tab_at(i, window, cx)
-                            })),
-                    )
-            }))
+                                this.activate_tab(i, window, cx)
+                            }))
+                            .on_mouse_up(
+                                MouseButton::Middle,
+                                cx.listener(move |this, _, window, cx| {
+                                    this.close_tab_at(i, window, cx)
+                                }),
+                            )
+                            .child(div().flex_1().min_w_0().truncate().child(title))
+                            .child(
+                                div()
+                                    .id(("close-tab", i))
+                                    .px_1()
+                                    .rounded_sm()
+                                    .text_color(muted)
+                                    .hover(|s| s.bg(hover).text_color(fg))
+                                    .child("×")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.close_tab_at(i, window, cx)
+                                    })),
+                            )
+                    }),
+            )
             .child(
                 div()
                     .id("new-tab")
@@ -143,13 +154,38 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.new_tab(&NewTab, window, cx))),
             );
 
+        // The single tab's title, centered on the whole bar. Only the text
+        // takes the mouse, as part of the drag area, so the buttons on either
+        // side stay clickable.
+        let centered_title = single.then(|| {
+            let title = self.tabs[0].active.read(cx).title().to_owned();
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .max_w(relative(0.5))
+                        .truncate()
+                        .text_color(fg)
+                        .window_control_area(WindowControlArea::Drag)
+                        .child(title),
+                )
+        });
+
         div()
+            .relative()
             .flex()
             .flex_row()
             .flex_none()
             .h(px(TAB_BAR_HEIGHT))
             .bg(bar)
             .text_sm()
+            .children(centered_title)
             .child(self.inert_while_settings(tabs))
             .child(
                 // Empty space. With the custom title bar it drags the window

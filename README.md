@@ -3,7 +3,8 @@
 A GPU-accelerated, xterm-compatible terminal for Windows (macOS and Linux
 best-effort), written in Rust with [gpui](https://gpui.rs).
 
-- Tabs and split panes, with the tabs in the title bar on Windows (like Windows Terminal)
+- Tabs and split panes, with the tabs in the title bar on Windows (like Windows
+  Terminal). With a single tab, the title bar shows the window title, centered.
 - Search (literal or regex, case toggle, highlighted matches)
 - Themes, Tokyo Night by default, with live config reload
 - Background opacity and blur
