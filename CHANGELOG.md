@@ -11,6 +11,8 @@ version and changelog section, and uses that section as the release notes.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-11-10
+
 ### Added
 
 - Terminal: xterm-compatible emulation (alacritty_terminal) over ConPTY,
