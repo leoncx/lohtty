@@ -150,7 +150,7 @@ impl Workspace {
             .h(px(TAB_BAR_HEIGHT))
             .bg(bar)
             .text_sm()
-            .child(tabs)
+            .child(self.inert_while_settings(tabs))
             .child(
                 // Empty space. With the custom title bar it drags the window
                 // (double-click maximizes, right-click opens the system menu);
@@ -166,10 +166,29 @@ impl Workspace {
                             .child(div().flex_1().window_control_area(WindowControlArea::Drag))
                     }),
             )
-            .child(self.render_split_buttons(cx))
+            .child(self.inert_while_settings(self.render_split_buttons(cx)))
             .child(self.render_settings_button(window, cx))
             .when(CUSTOM_TITLEBAR, |el| {
                 el.child(self.render_caption_buttons(window))
+            })
+    }
+
+    /// Title-bar controls that act on tabs or panes are dimmed and ignore the
+    /// mouse while the settings dialog is open, like the keyboard shortcuts.
+    /// The gear (refocuses the dialog), the drag area and the caption buttons
+    /// stay usable.
+    fn inert_while_settings(&self, content: impl IntoElement) -> impl IntoElement {
+        div()
+            .relative()
+            .flex()
+            .flex_row()
+            .min_w_0()
+            .flex_shrink()
+            .h_full()
+            .child(content)
+            .when(self.settings.is_some(), |el| {
+                el.opacity(0.4)
+                    .child(div().absolute().top_0().left_0().size_full().occlude())
             })
     }
 

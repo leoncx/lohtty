@@ -225,7 +225,7 @@ Each milestone ends with a runnable build.
   - **Layout:** the dialog covers the panes, not the title bar, so the window stays movable and closable.
   - **`TextField`:** a reusable single-line input with the same text-input path as the terminal. Like the terminal, it lets Windows resolve a pending dead key (e.g. `"` on US-International) before acting on Enter or Esc.
   - **Search bar:** handles a pending dead key before Enter / Shift+Enter / Esc the same way, so `b"` + Enter searches for `b"`.
-  - **Shortcuts while open:** the workspace's action handlers are only registered while no dialog is open, so shortcuts like new tab, split, pane focus and tab switching do nothing behind the dialog. Ctrl+, still works and moves focus back to the dialog. The title-bar buttons can still be clicked.
+  - **Shortcuts while open:** the workspace's action handlers are only registered while no dialog is open, so shortcuts like new tab, split, pane focus and tab switching do nothing behind the dialog. Ctrl+, still works and moves focus back to the dialog. In the title bar, the tabs, + and split buttons are dimmed and covered by an occluding overlay, so clicks don't reach them; the gear, the drag area and the caption buttons still work.
 
 **M4 — Rendering polish** — **done**
 - Ligatures (run batching), font fallback for emoji and CJK, wide-character correctness.
