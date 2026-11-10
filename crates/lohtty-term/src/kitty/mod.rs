@@ -21,7 +21,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::Write as _;
 use std::sync::{Arc, Mutex};
 
-use crate::filter::OutputFilter;
+use crate::filter::{OutputFilter, Screen};
 use command::Command;
 
 /// URI scheme of the marker hyperlinks (see the module docs).
@@ -116,6 +116,7 @@ impl Graphics {
             scan: Scan::Normal,
             apc: Vec::new(),
             pending: None,
+            deferred: VecDeque::new(),
         }
     }
 
@@ -171,12 +172,17 @@ pub struct KittyFilter {
     scan: Scan,
     apc: Vec<u8>,
     pending: Option<Pending>,
+    /// Deletes by position, waiting for the screen at their place in the
+    /// output: (offset in the last `out`, command).
+    deferred: VecDeque<(usize, Command)>,
 }
 
 const ESC: u8 = 0x1b;
 
 impl OutputFilter for KittyFilter {
     fn filter(&mut self, input: &[u8], out: &mut Vec<u8>, pty_reply: &mut Vec<u8>) {
+        // Deletes not handed to the reader (it always takes them) are stale.
+        self.deferred.clear();
         let mut i = 0;
         while i < input.len() {
             let b = input[i];
@@ -263,6 +269,16 @@ impl OutputFilter for KittyFilter {
             i += 1;
         }
     }
+
+    fn take_checkpoints(&mut self) -> Vec<usize> {
+        self.deferred.iter().map(|(at, _)| *at).collect()
+    }
+
+    fn at_checkpoint(&mut self, screen: &dyn Screen) {
+        if let Some((_, cmd)) = self.deferred.pop_front() {
+            self.delete_at(&cmd, screen);
+        }
+    }
 }
 
 impl KittyFilter {
@@ -311,7 +327,15 @@ impl KittyFilter {
                 Some(id)
             }),
             b'd' => {
-                self.delete(&cmd);
+                if matches!(
+                    cmd.delete.to_ascii_lowercase(),
+                    b'c' | b'p' | b'q' | b'x' | b'y'
+                ) {
+                    // Needs the screen as it is at this point of the output.
+                    self.deferred.push_back((out.len(), cmd));
+                } else {
+                    self.delete(&cmd);
+                }
                 return;
             }
             other => Err(format!(
@@ -445,9 +469,9 @@ impl KittyFilter {
         write_markers(out, serial, rows, cols, !cmd.keep_cursor);
     }
 
+    /// Deletes by id, number, z-index, id range, or everything.
     fn delete(&mut self, cmd: &Command) {
-        let mut state = self.graphics.state.lock().unwrap();
-        let free = cmd.delete.is_ascii_uppercase();
+        let state = self.graphics.state.lock().unwrap();
         let doomed: Vec<u64> = match cmd.delete.to_ascii_lowercase() {
             b'a' => state.placements.keys().copied().collect(),
             b'i' | b'n' => {
@@ -473,10 +497,64 @@ impl KittyFilter {
                 .filter(|(_, p)| p.z == cmd.z)
                 .map(|(s, _)| *s)
                 .collect(),
-            // Deleting by cell or cursor position would need the grid;
-            // the placement stays until its markers scroll away.
+            // Images whose id is in x..=y.
+            b'r' => state
+                .placements
+                .iter()
+                .filter(|(_, p)| (cmd.x..=cmd.y).contains(&p.image_id))
+                .map(|(s, _)| *s)
+                .collect(),
+            // By position: see `delete_at`. Others (animation frames) don't
+            // apply.
             _ => Vec::new(),
         };
+        drop(state);
+        self.remove_placements(doomed, cmd.delete);
+    }
+
+    /// Deletes the placements on screen that cover a cell (`p`, `q` with a
+    /// z-index), the cursor's cell (`c`), a column (`x`) or a row (`y`).
+    /// Cells and rows are counted from 1, as in the protocol.
+    fn delete_at(&mut self, cmd: &Command, screen: &dyn Screen) {
+        // Each visible placement's column and rows, from its markers.
+        let mut seen: HashMap<u64, (usize, Vec<usize>)> = HashMap::new();
+        screen.for_each_link(&mut |uri, row, col| {
+            if let Some((serial, _)) = parse_marker(uri) {
+                seen.entry(serial).or_insert((col, Vec::new())).1.push(row);
+            }
+        });
+        let (cursor_row, cursor_col) = screen.cursor();
+        let (x, y) = (cmd.x as usize, cmd.y as usize);
+        let state = self.graphics.state.lock().unwrap();
+        let doomed: Vec<u64> = seen
+            .into_iter()
+            .filter(|(serial, (col, rows))| {
+                let Some(p) = state.placements.get(serial) else {
+                    return false;
+                };
+                let cols = *col..*col + p.cols.max(1) as usize;
+                let covers =
+                    |row: usize, column: usize| rows.contains(&row) && cols.contains(&column);
+                match cmd.delete.to_ascii_lowercase() {
+                    b'c' => covers(cursor_row, cursor_col),
+                    b'p' => x > 0 && y > 0 && covers(y - 1, x - 1),
+                    b'q' => x > 0 && y > 0 && covers(y - 1, x - 1) && p.z == cmd.z,
+                    b'x' => x > 0 && cols.contains(&(x - 1)),
+                    b'y' => y > 0 && rows.contains(&(y - 1)),
+                    _ => false,
+                }
+            })
+            .map(|(serial, _)| serial)
+            .collect();
+        drop(state);
+        self.remove_placements(doomed, cmd.delete);
+    }
+
+    /// Removes placements; an upper-case `delete` also frees the images left
+    /// without placements.
+    fn remove_placements(&mut self, doomed: Vec<u64>, delete: u8) {
+        let mut state = self.graphics.state.lock().unwrap();
+        let free = delete.is_ascii_uppercase();
         let mut touched = Vec::new();
         for serial in doomed {
             if let Some(p) = state.placements.remove(&serial) {
@@ -488,7 +566,7 @@ impl KittyFilter {
         } = &mut *state;
         keyed.retain(|_, serial| placements.contains_key(serial));
         if free {
-            if cmd.delete == b'A' {
+            if delete == b'A' {
                 // Everything is gone from the screen: free every image.
                 touched = state.images.keys().copied().collect();
             }

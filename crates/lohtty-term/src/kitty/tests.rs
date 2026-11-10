@@ -318,3 +318,127 @@ fn file_and_temp_file_transmission() {
     );
     assert!(reply.starts_with(b"\x1b_Gi=5;EBADF:not a regular file"));
 }
+
+/// A terminal fed the way the session's reader does: filter, then parse up
+/// to each checkpoint and show the filter the screen there.
+struct Screen20x8 {
+    graphics: Graphics,
+    filter: KittyFilter,
+    term: Term<VoidListener>,
+    parser: Processor,
+}
+
+impl Screen20x8 {
+    fn new() -> Self {
+        let graphics = Graphics::new();
+        graphics.set_cell_size(10, 10);
+        let size = crate::TermSize {
+            cols: 20,
+            rows: 8,
+            cell_width: 10,
+            cell_height: 10,
+        };
+        Self {
+            filter: graphics.filter(),
+            graphics,
+            term: Term::new(Config::default(), &size, VoidListener),
+            parser: Processor::new(),
+        }
+    }
+
+    fn feed(&mut self, input: &[u8]) {
+        let (mut out, mut reply) = (Vec::new(), Vec::new());
+        self.filter.filter(input, &mut out, &mut reply);
+        let mut start = 0;
+        for at in self.filter.take_checkpoints() {
+            self.parser.advance(&mut self.term, &out[start..at]);
+            self.filter.at_checkpoint(&self.term);
+            start = at;
+        }
+        self.parser.advance(&mut self.term, &out[start..]);
+    }
+
+    /// Image ids of the remaining placements, sorted.
+    fn placed(&self) -> Vec<u32> {
+        let state = self.graphics.state.lock().unwrap();
+        let mut ids: Vec<u32> = state.placements.values().map(|p| p.image_id).collect();
+        ids.sort();
+        ids
+    }
+
+    fn stored(&self, id: u32) -> bool {
+        self.graphics.state.lock().unwrap().images.contains_key(&id)
+    }
+}
+
+/// Image 1 at rows 1-2, columns 0-2; image 2 at rows 1-2, columns 5-7
+/// (3 x 2 cells each, C=1 so the cursor stays put between them).
+fn two_images() -> Screen20x8 {
+    let mut s = Screen20x8::new();
+    let mut input = b"\r\n".to_vec();
+    input.extend(apc("a=T,i=1,s=30,v=20,C=1", &rgba(30, 20)));
+    input.extend(b"\x1b[5C");
+    input.extend(apc("a=T,i=2,s=30,v=20,C=1,z=3", &rgba(30, 20)));
+    s.feed(&input);
+    assert_eq!(s.placed(), vec![1, 2]);
+    s
+}
+
+#[test]
+fn delete_at_a_cell_removes_only_the_image_there() {
+    let mut s = two_images();
+    // Cell (column 7, row 3) counted from 1: image 2's middle column, row 2.
+    s.feed(b"\x1b_Ga=d,d=p,x=7,y=3\x1b\\");
+    assert_eq!(s.placed(), vec![1]);
+    assert!(s.stored(2), "lower-case keeps the image data");
+    // A cell outside every image deletes nothing.
+    s.feed(b"\x1b_Ga=d,d=p,x=4,y=2\x1b\\");
+    assert_eq!(s.placed(), vec![1]);
+    // Upper-case frees the image too.
+    s.feed(b"\x1b_Ga=d,d=P,x=1,y=2\x1b\\");
+    assert!(s.placed().is_empty());
+    assert!(!s.stored(1));
+}
+
+#[test]
+fn delete_at_a_cell_can_require_a_z_index() {
+    let mut s = two_images();
+    s.feed(b"\x1b_Ga=d,d=q,x=6,y=2,z=0\x1b\\");
+    assert_eq!(s.placed(), vec![1, 2], "image 2 has z=3");
+    s.feed(b"\x1b_Ga=d,d=q,x=6,y=2,z=3\x1b\\");
+    assert_eq!(s.placed(), vec![1]);
+}
+
+#[test]
+fn delete_by_column_and_row() {
+    let mut s = two_images();
+    s.feed(b"\x1b_Ga=d,d=x,x=2\x1b\\");
+    assert_eq!(s.placed(), vec![2]);
+    let mut s = two_images();
+    s.feed(b"\x1b_Ga=d,d=y,y=1\x1b\\");
+    assert_eq!(s.placed(), vec![1, 2], "row 1 is above the images");
+    s.feed(b"\x1b_Ga=d,d=y,y=3\x1b\\");
+    assert!(s.placed().is_empty());
+}
+
+#[test]
+fn delete_at_the_cursor_sees_output_before_it_in_the_same_read() {
+    let mut s = two_images();
+    // One read: move the cursor onto image 2 (row 3, column 6), delete there.
+    s.feed(b"\x1b[3;6H\x1b_Ga=d,d=c\x1b\\");
+    assert_eq!(s.placed(), vec![1]);
+    // And onto image 1 (row 3, column 3), the cursor moved by text in the
+    // same read. (Text over column 1 would replace that row's marker, which
+    // hides the image row.)
+    s.feed(b"\x1b[3;2Ha\x1b_Ga=d,d=c\x1b\\");
+    assert!(s.placed().is_empty());
+}
+
+#[test]
+fn delete_by_id_range() {
+    let mut s = two_images();
+    s.feed(b"\x1b_Ga=d,d=r,x=2,y=9\x1b\\");
+    assert_eq!(s.placed(), vec![1]);
+    s.feed(b"\x1b_Ga=d,d=R,x=1,y=1\x1b\\");
+    assert!(s.placed().is_empty() && !s.stored(1));
+}

@@ -261,12 +261,25 @@ impl Session {
                     out.clear();
                     reply.clear();
                     filter.filter(&buf[..n], &mut out, &mut reply);
+                    // Filter replies go first, before the parser's own (a
+                    // client may wait for its graphics replies, then DA1).
                     if !reply.is_empty() {
                         let _ = reader_pty_tx.send(reply.clone());
                     }
+                    let checkpoints = filter.take_checkpoints();
                     let syncing = {
                         let mut processor = processor.lock().unwrap();
-                        processor.advance(&mut *reader_term.lock(), &out);
+                        let mut term = reader_term.lock();
+                        // Parse up to each point where the filter needs the
+                        // screen, and show it the screen there.
+                        let mut start = 0;
+                        for at in checkpoints {
+                            let at = at.clamp(start, out.len());
+                            processor.advance(&mut *term, &out[start..at]);
+                            filter.at_checkpoint(&*term);
+                            start = at;
+                        }
+                        processor.advance(&mut *term, &out[start..]);
                         processor.sync_timeout().sync_timeout().is_some()
                     };
                     if syncing {

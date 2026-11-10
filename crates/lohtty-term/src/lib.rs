@@ -11,6 +11,6 @@ mod session;
 mod shell;
 
 pub use alacritty_terminal;
-pub use filter::{OutputFilter, PassThrough};
+pub use filter::{OutputFilter, PassThrough, Screen};
 pub use session::{Session, SessionEvent, TermSize};
 pub use shell::{ShellSpec, resolve_shell};
