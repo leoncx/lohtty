@@ -1,5 +1,6 @@
 //! The terminal grid view: paints a [`Session`]'s screen and forwards input.
 
+mod box_drawing;
 #[cfg(feature = "kitty-graphics")]
 mod images;
 mod input;

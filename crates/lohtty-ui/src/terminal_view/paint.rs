@@ -10,14 +10,15 @@ use alacritty_terminal::index::{Column, Line, Point as GridPoint};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::CursorShape;
 use gpui::{
-    App, BorderStyle, Bounds, Font, FontId, GlyphId, Hsla, PaintQuad, Pixels, Point, Rgba,
-    ShapedLine, StrikethroughStyle, TextRun, UnderlineStyle, Window, WindowTextSystem, fill,
-    outline, point, px, size,
+    App, BorderStyle, Bounds, Font, FontId, GlyphId, Hsla, PaintQuad, Path, PathBuilder, Pixels,
+    Point, Rgba, ShapedLine, StrikethroughStyle, TextRun, UnderlineStyle, Window, WindowTextSystem,
+    fill, outline, point, px, size,
 };
 use lohtty_term::search::{self, Match, RegexSearch};
 use lohtty_term::{Session, TermSize};
 use lohtty_theme::Theme;
 
+use super::box_drawing::{self, Shape};
 use super::{CellMetrics, GridGeometry, PaintState};
 use crate::colors::{self, to_rgba};
 use crate::perf;
@@ -71,6 +72,12 @@ struct CellGlyph {
     emoji: bool,
 }
 
+/// A box-drawing or block character's shapes, ready to paint.
+enum BoxShape {
+    Quad(PaintQuad),
+    Path(Path<Pixels>, Hsla),
+}
+
 /// The glyph a character renders as, alone, in a given font (possibly a
 /// fallback font). `None` when it takes several glyphs.
 type CachedGlyph = Option<(FontId, GlyphId, bool)>;
@@ -93,6 +100,8 @@ pub(super) struct Frame {
     cursor_below: Option<PaintQuad>,
     lines: Vec<(Point<Pixels>, ShapedLine)>,
     glyphs: Vec<CellGlyph>,
+    /// Box-drawing and block characters, painted with the glyphs.
+    boxes: Vec<BoxShape>,
     #[cfg(feature = "kitty-graphics")]
     images: super::images::ImageFrame,
     /// Distance from the top of a cell to the text baseline.
@@ -140,6 +149,9 @@ impl FramePainter {
         let mut cursor_below = None;
         let mut cursor_above = None;
         let mut cursor_bounds = None;
+        let mut boxes = Vec::new();
+        let scale = window.scale_factor();
+        let box_weights = box_drawing::Weights::for_font(f32::from(m.font_size) * scale);
 
         #[cfg(feature = "kitty-graphics")]
         let mut markers = Vec::new();
@@ -262,6 +274,25 @@ impl FramePainter {
                 if flags.contains(Flags::HIDDEN) {
                     segments.extend(seg.take());
                     pending_spaces = 0;
+                    continue;
+                }
+                // Box-drawing and block characters are drawn as shapes so they
+                // join across cells; decorated or combined ones keep the font.
+                if box_drawing::supported(cell.c)
+                    && width == 1
+                    && !decorated
+                    && cell.zerowidth().is_none()
+                {
+                    segments.extend(seg.take());
+                    pending_spaces = 0;
+                    box_shapes(
+                        cell.c,
+                        cell_bounds(row, col, 1),
+                        scale,
+                        box_weights,
+                        fg,
+                        &mut boxes,
+                    );
                     continue;
                 }
                 if cell.c == ' ' && !decorated && !is_cursor {
@@ -475,6 +506,7 @@ impl FramePainter {
             cursor_below,
             lines,
             glyphs,
+            boxes,
             #[cfg(feature = "kitty-graphics")]
             images,
             baseline,
@@ -590,6 +622,63 @@ impl FramePainter {
     }
 }
 
+/// Adds the shapes of box-drawing character `c` in `cell`, converted from
+/// device pixels back to the window's logical pixels.
+fn box_shapes(
+    c: char,
+    cell: Bounds<Pixels>,
+    scale: f32,
+    weights: box_drawing::Weights,
+    color: Rgba,
+    out: &mut Vec<BoxShape>,
+) {
+    let device = box_drawing::Cell {
+        x: f32::from(cell.origin.x) * scale,
+        y: f32::from(cell.origin.y) * scale,
+        w: f32::from(cell.size.width) * scale,
+        h: f32::from(cell.size.height) * scale,
+    };
+    let at = |(x, y): (f32, f32)| point(px(x / scale), px(y / scale));
+    for shape in box_drawing::shapes(c, device, weights).unwrap_or_default() {
+        match shape {
+            Shape::Rect {
+                x0,
+                y0,
+                x1,
+                y1,
+                alpha,
+            } => {
+                let color = Rgba {
+                    a: color.a * alpha,
+                    ..color
+                };
+                out.push(BoxShape::Quad(fill(
+                    Bounds::from_corners(at((x0, y0)), at((x1, y1))),
+                    color,
+                )));
+            }
+            Shape::Stroke {
+                start,
+                segments,
+                width,
+            } => {
+                let mut path = PathBuilder::stroke(px(width / scale));
+                path.move_to(at(start));
+                for [c1, c2, to] in segments {
+                    if c1 == c2 && c2 == to {
+                        path.line_to(at(to));
+                    } else {
+                        path.cubic_bezier_to(at(to), at(c1), at(c2));
+                    }
+                }
+                if let Ok(path) = path.build() {
+                    out.push(BoxShape::Path(path, color.into()));
+                }
+            }
+        }
+    }
+}
+
 fn plain_run(len: usize, font: &Font, color: Hsla) -> TextRun {
     TextRun {
         len,
@@ -665,6 +754,12 @@ impl Frame {
                 } else {
                     window.paint_glyph(at, g.font_id, g.id, self.font_size, g.color)
                 };
+            }
+            for shape in self.boxes {
+                match shape {
+                    BoxShape::Quad(quad) => window.paint_quad(quad),
+                    BoxShape::Path(path, color) => window.paint_path(path, color),
+                }
             }
         });
         #[cfg(feature = "kitty-graphics")]
