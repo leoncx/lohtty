@@ -181,6 +181,10 @@ Mouse:
   your environment. lohtty passes the environment through unchanged.
 - **Prompt icons show as boxes.** Install a Nerd Font (for example
   *Symbols Nerd Font Mono*) or list one in `font.fallbacks`.
+- **Italic text shows upright (Linux, macOS).** The font has no italic face:
+  lohtty can't slant it there (Windows does). Use a font that ships italics,
+  such as DejaVu Sans Mono with its Oblique files (`fonts-dejavu-extra` on
+  Debian and Ubuntu), JetBrains Mono, Fira Code or Cascadia Code.
 - **Images don't show.** Programs detect kitty graphics by sending a query,
   which lohtty answers unless `graphics.kitty = false`. Images need a Windows
   ConPTY that passes the protocol's escape sequences through (verified on
