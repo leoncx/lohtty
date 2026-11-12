@@ -11,6 +11,8 @@ version and changelog section, and uses that section as the release notes.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-12
+
 ### Added
 
 - Usage meter: Claude's and Codex's session (5-hour) and weekly limits as a
