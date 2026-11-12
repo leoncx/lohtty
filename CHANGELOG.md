@@ -11,6 +11,27 @@ version and changelog section, and uses that section as the release notes.
 
 ## [Unreleased]
 
+### Added
+
+- macOS: the tab bar is the title bar, with the traffic lights on its left,
+  as on Windows. A single tab shows as the window title, centered.
+- New tabs and splits start in the active pane's directory. On macOS and
+  Linux it works with any shell; on Windows the shell must report it (OSC 7
+  or OSC 9;9, see the README).
+- An About section at the bottom of Settings: version, release date and
+  commit.
+
+### Changed
+
+- Tabs share the title bar equally (two take half each, three a third).
+
+### Fixed
+
+- macOS: Option+Left/Right move by word in the shell, and Option+Fn+Delete
+  deletes the next word.
+- Zooming the window or switching to full screen no longer leaves copies of
+  the shell prompt behind: the shell gets the new size once it settles.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added

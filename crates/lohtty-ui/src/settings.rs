@@ -204,6 +204,28 @@ impl SettingsDialog {
             .into_any_element()
     }
 
+    /// The About section: version, release date and commit, set at build
+    /// time (see `build.rs`).
+    fn about(&self) -> Vec<AnyElement> {
+        // "0.2.0", or "0.2.0 +7 commits (development build)" past the tag.
+        let version = env!("CARGO_PKG_VERSION");
+        let version = match env!("LOHTTY_DEV_BUILD") {
+            "" => version.to_owned(),
+            "dev" => format!("{version} (development build)"),
+            since => format!("{version} {since} (development build)"),
+        };
+        let mut rows = vec![self.section("About"), self.row("Version", version)];
+        for (label, value) in [
+            ("Released", env!("LOHTTY_RELEASE_DATE")),
+            ("Commit", env!("LOHTTY_COMMIT")),
+        ] {
+            if !value.is_empty() {
+                rows.push(self.row(label, value));
+            }
+        }
+        rows
+    }
+
     fn section(&self, title: &'static str) -> AnyElement {
         let p = Palette::new(&self.theme);
         div()
@@ -346,7 +368,7 @@ impl Render for SettingsDialog {
                 .child(label)
         };
 
-        let rows: Vec<AnyElement> = vec![
+        let mut rows: Vec<AnyElement> = vec![
             self.section("Appearance"),
             self.row("Theme", self.theme_picker(cx)),
             self.row(
@@ -421,6 +443,7 @@ impl Render for SettingsDialog {
                 ),
             ),
         ];
+        rows.extend(self.about());
 
         div()
             .id("settings")
