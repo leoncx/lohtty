@@ -120,3 +120,53 @@ fn resize_updates_grid_dimensions() {
     assert_eq!(term.columns(), 120);
     assert_eq!(term.screen_lines(), 40);
 }
+
+/// Sizes changing in a burst (a window animating) reach the shell as the
+/// first and the last only, so it redraws its prompt once per burst.
+#[cfg(unix)]
+#[test]
+fn resize_burst_reaches_the_pty_settled() {
+    let shell = ShellSpec::new(
+        "/bin/sh",
+        vec![
+            "-c".into(),
+            "trap 'stty size' WINCH; echo ready; while :; do sleep 0.05; done".into(),
+        ],
+    );
+    let size = TermSize {
+        cols: 80,
+        rows: 24,
+        cell_width: 8,
+        cell_height: 16,
+    };
+    let (session, _events) = Session::spawn(&shell, size, 100, Box::new(PassThrough)).unwrap();
+    let wait_for = |needle: &str| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let text = screen_text(&session);
+            if text.contains(needle) {
+                return text;
+            }
+            assert!(Instant::now() < deadline, "never saw {needle:?}:\n{text}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    wait_for("ready");
+
+    for cols in 100..=110 {
+        session.resize(TermSize {
+            cols,
+            rows: 30,
+            ..size
+        });
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let text = wait_for("30 110");
+    assert!(text.contains("30 100"), "first size missing:\n{text}");
+    for cols in 101..110 {
+        assert!(
+            !text.contains(&format!("30 {cols}")),
+            "30 {cols} reached the shell:\n{text}"
+        );
+    }
+}

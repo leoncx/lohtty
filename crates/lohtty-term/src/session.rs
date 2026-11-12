@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::Term;
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
@@ -18,6 +18,11 @@ use crate::modes::ModeWatcher;
 use crate::notify::{Notification, OscEvent, OscScanner};
 use crate::status::{QUERY_REPLY, Shown, StatusBoard};
 use crate::{OutputFilter, ShellSpec};
+
+/// How long the size must stay unchanged before the PTY gets it. A window
+/// animating (zoom, full screen) changes size every frame, and a shell redraws
+/// its prompt on each change, leaving copies behind; it gets the last one only.
+const RESIZE_SETTLE: Duration = Duration::from_millis(100);
 
 /// Grid size in cells plus the cell size in pixels (needed by some escape sequences).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,11 +147,12 @@ fn device_attributes(reply: String) -> String {
 /// A shell running in a PTY, with its terminal state.
 ///
 /// Threads: a reader (PTY → filter → parser), a writer (input → PTY, so
-/// replies never block the parser) and a waiter (child exit).
+/// replies never block the parser), a resizer (sizes → PTY, see
+/// [`RESIZE_SETTLE`]) and a waiter (child exit).
 pub struct Session {
     term: Arc<FairMutex<Term<EventProxy>>>,
     pty_tx: mpsc::Sender<Vec<u8>>,
-    master: Box<dyn MasterPty + Send>,
+    resize_tx: mpsc::Sender<TermSize>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     size: Arc<Mutex<TermSize>>,
     dirty: Arc<AtomicBool>,
@@ -341,6 +347,11 @@ impl Session {
                 let _ = proxy.events.try_send(SessionEvent::Exit);
             })?;
 
+        let (resize_tx, resize_rx) = mpsc::channel();
+        thread::Builder::new()
+            .name("pty-resize".into())
+            .spawn(move || resize_pty(&*master, &resize_rx))?;
+
         thread::Builder::new()
             .name("pty-child".into())
             .spawn(move || {
@@ -353,7 +364,7 @@ impl Session {
             Self {
                 term,
                 pty_tx,
-                master,
+                resize_tx,
                 killer,
                 size: size_cell,
                 dirty,
@@ -400,7 +411,8 @@ impl Session {
         *self.size.lock().unwrap()
     }
 
-    /// Resizes the grid and the PTY. No-op if the size is unchanged.
+    /// Resizes the grid now and the PTY once the size settles (see
+    /// [`RESIZE_SETTLE`]). No-op if the size is unchanged.
     pub fn resize(&self, new: TermSize) {
         {
             let mut size = self.size.lock().unwrap();
@@ -409,9 +421,7 @@ impl Session {
             }
             *size = new;
         }
-        if let Err(e) = self.master.resize(new.pty_size()) {
-            tracing::warn!("PTY resize failed: {e}");
-        }
+        let _ = self.resize_tx.send(new);
         self.term.lock().resize(new);
     }
 
@@ -427,6 +437,29 @@ impl Session {
     /// Clears the pending-wakeup flag. Call before reading the grid for a repaint.
     pub fn clear_dirty(&self) {
         self.dirty.store(false, Ordering::Release);
+    }
+}
+
+/// Passes sizes to the PTY until the session is dropped. The first one goes
+/// at once (the shell starts at a guessed size); later ones once no newer
+/// size has come for [`RESIZE_SETTLE`].
+fn resize_pty(master: &dyn MasterPty, sizes: &mpsc::Receiver<TermSize>) {
+    let apply = |size: TermSize| {
+        if let Err(e) = master.resize(size.pty_size()) {
+            tracing::warn!("PTY resize failed: {e}");
+        }
+    };
+    let Ok(first) = sizes.recv() else { return };
+    apply(first);
+    while let Ok(mut size) = sizes.recv() {
+        loop {
+            match sizes.recv_timeout(RESIZE_SETTLE) {
+                Ok(newer) => size = newer,
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
+        }
+        apply(size);
     }
 }
 
