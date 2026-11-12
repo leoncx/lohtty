@@ -125,7 +125,9 @@ impl Workspace {
             0.0
         };
         // gpui's macOS backend ignores window control areas: AppKit drags the
-        // window from the bar itself, and a double-click is handled here.
+        // window from the bar itself, and a double-click is handled here, on
+        // the empty space only. It lies under the centered title too, and a
+        // second handler there would zoom and unzoom on the same click.
         let double_click_zooms = |el: gpui::Div| {
             el.when(cfg!(target_os = "macos"), |el| {
                 el.on_mouse_down(MouseButton::Left, |ev, window, _| {
@@ -259,14 +261,14 @@ impl Workspace {
                 .gap_2()
                 .children(status)
                 .children(attention_dot(waiting))
-                .child(double_click_zooms(
+                .child(
                     div()
                         .max_w(px(title_max_width))
                         .truncate()
                         .text_color(fg)
                         .window_control_area(WindowControlArea::Drag)
                         .child(title),
-                ))
+                )
         });
 
         div()
