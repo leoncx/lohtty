@@ -9,11 +9,11 @@ use gpui::{
 };
 
 use super::*;
-use crate::CUSTOM_TITLEBAR;
 use crate::colors::{mix, to_rgba};
 use crate::pane_tree::Node;
 use crate::tooltip::Tooltip;
 use crate::usage_meter::{self, Palette, UsageTooltip};
+use crate::{CAPTION_BUTTONS, CUSTOM_TITLEBAR};
 
 /// Width of the divider hit area between panes, in pixels.
 const DIVIDER: f32 = 5.0;
@@ -24,6 +24,8 @@ const CAPTION_BUTTON_WIDTH: f32 = 46.0;
 const TOOL_BUTTON_WIDTH: f32 = 36.0;
 const USAGE_BUTTON_WIDTH: f32 = 30.0;
 const NEW_TAB_WIDTH: f32 = 36.0;
+/// Room left for the macOS traffic lights at the start of the tab bar.
+const TRAFFIC_LIGHTS_WIDTH: f32 = 78.0;
 
 /// A 14×12 pane outline divided in two: side by side for [`Axis::Horizontal`]
 /// (split right), stacked for [`Axis::Vertical`] (split down).
@@ -103,7 +105,8 @@ impl Workspace {
     }
 
     /// The tab bar. With [`CUSTOM_TITLEBAR`] it is also the window's title bar:
-    /// empty space drags the window and the caption buttons sit on the right.
+    /// empty space drags the window, with the caption buttons on the right
+    /// (Windows) or the traffic lights on the left (macOS).
     /// There, a single tab shows as the window title, centered, and the tab
     /// strip appears once a second tab opens.
     fn render_tab_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -115,6 +118,23 @@ impl Workspace {
         let muted = to_rgba(mix(t.foreground, t.background, 0.45));
         let accent = to_rgba(t.ansi[4]);
         let single = CUSTOM_TITLEBAR && self.tabs.len() == 1;
+        // The traffic lights are hidden in full screen.
+        let lights = if cfg!(target_os = "macos") && !window.is_fullscreen() {
+            TRAFFIC_LIGHTS_WIDTH
+        } else {
+            0.0
+        };
+        // gpui's macOS backend ignores window control areas: AppKit drags the
+        // window from the bar itself, and a double-click is handled here.
+        let double_click_zooms = |el: gpui::Div| {
+            el.when(cfg!(target_os = "macos"), |el| {
+                el.on_mouse_down(MouseButton::Left, |ev, window, _| {
+                    if ev.click_count == 2 {
+                        window.titlebar_double_click();
+                    }
+                })
+            })
+        };
         // A dot before the title of a tab with a pane waiting for the user.
         let attention_dot = |show: bool| {
             show.then(|| {
@@ -208,8 +228,8 @@ impl Workspace {
         // space between them. 40 px leave room for its status and dot.
         let (title_left, title_right, title_max_width) = {
             let bar = f32::from(window.viewport_size().width);
-            let left = NEW_TAB_WIDTH + 8.0;
-            let right = if CUSTOM_TITLEBAR {
+            let left = lights + NEW_TAB_WIDTH + 8.0;
+            let right = if CAPTION_BUTTONS {
                 3.0 * CAPTION_BUTTON_WIDTH
             } else {
                 0.0
@@ -239,14 +259,14 @@ impl Workspace {
                 .gap_2()
                 .children(status)
                 .children(attention_dot(waiting))
-                .child(
+                .child(double_click_zooms(
                     div()
                         .max_w(px(title_max_width))
                         .truncate()
                         .text_color(fg)
                         .window_control_area(WindowControlArea::Drag)
                         .child(title),
-                )
+                ))
         });
 
         div()
@@ -257,13 +277,14 @@ impl Workspace {
             .h(px(TAB_BAR_HEIGHT))
             .bg(bar)
             .text_sm()
+            .pl(px(lights))
             .children(centered_title)
             .child(self.inert_while_settings(tabs))
             .child(
                 // Empty space. With the custom title bar it drags the window
                 // (double-click maximizes, right-click opens the system menu);
                 // a thin strip on top is left out so the top edge still resizes.
-                div()
+                double_click_zooms(div())
                     .flex()
                     .flex_col()
                     .flex_1()
@@ -277,7 +298,7 @@ impl Workspace {
             .child(self.render_usage(cx))
             .child(self.inert_while_settings(self.render_split_buttons(cx)))
             .child(self.render_settings_button(window, cx))
-            .when(CUSTOM_TITLEBAR, |el| {
+            .when(CAPTION_BUTTONS, |el| {
                 el.child(self.render_caption_buttons(window))
             })
     }

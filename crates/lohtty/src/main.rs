@@ -43,7 +43,8 @@ fn main() {
                 title: Some("lohtty".into()),
                 // The tab bar doubles as the title bar (see lohtty_ui::CUSTOM_TITLEBAR).
                 appears_transparent: lohtty_ui::CUSTOM_TITLEBAR,
-                ..Default::default()
+                traffic_light_position: cfg!(target_os = "macos")
+                    .then_some(lohtty_ui::TRAFFIC_LIGHT_POSITION),
             }),
             window_background: window_background(win),
             app_id: Some("lohtty".into()),
