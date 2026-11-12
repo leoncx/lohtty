@@ -170,3 +170,40 @@ fn resize_burst_reaches_the_pty_settled() {
         );
     }
 }
+
+/// The shell starts in the requested directory, and the session follows its
+/// `cd`s (read from the process, as this shell reports nothing).
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn shell_starts_in_cwd_and_session_follows_it() {
+    let start = std::env::temp_dir().canonicalize().unwrap();
+    let mut shell = ShellSpec::new(
+        "/bin/sh",
+        vec!["-c".into(), "pwd -P; cd /usr && echo moved; sleep 5".into()],
+    );
+    shell.cwd = Some(start.clone());
+    let size = TermSize {
+        cols: 200,
+        rows: 24,
+        cell_width: 8,
+        cell_height: 16,
+    };
+    let (session, _events) = Session::spawn(&shell, size, 100, Box::new(PassThrough)).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let text = loop {
+        let text = screen_text(&session);
+        if text.contains("moved") {
+            break text;
+        }
+        assert!(Instant::now() < deadline, "never moved:\n{text}");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(
+        text.contains(start.to_str().unwrap()),
+        "didn't start in {start:?}:\n{text}"
+    );
+    assert_eq!(
+        session.cwd().unwrap().canonicalize().unwrap(),
+        std::path::Path::new("/usr").canonicalize().unwrap()
+    );
+}

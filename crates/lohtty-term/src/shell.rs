@@ -10,6 +10,8 @@ pub struct ShellSpec {
     /// login profile completes. Set only for the default shell, so `program`
     /// is the user's shell and `args` is empty.
     pub login: bool,
+    /// The directory to start in, if it exists; else the home directory.
+    pub cwd: Option<PathBuf>,
 }
 
 impl ShellSpec {
@@ -19,6 +21,7 @@ impl ShellSpec {
             program: program.into(),
             args,
             login: false,
+            cwd: None,
         }
     }
 }
@@ -34,6 +37,7 @@ pub fn resolve_shell(program: Option<&str>, args: &[String]) -> ShellSpec {
             program: default_shell(),
             args: Vec::new(),
             login: true,
+            cwd: None,
         },
         _ => ShellSpec::new(default_shell(), args.to_vec()),
     }

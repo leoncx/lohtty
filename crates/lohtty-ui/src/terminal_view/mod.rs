@@ -8,6 +8,7 @@ mod paint;
 mod search;
 
 use std::cell::Cell;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -176,10 +177,12 @@ pub struct Spawned {
     graphics: Option<lohtty_term::kitty::Graphics>,
 }
 
-/// Starts the configured shell. Separate from [`TerminalView::new`] so that
-/// failures surface before a view is created.
-pub fn spawn_session(config: &Config) -> anyhow::Result<Spawned> {
-    let shell = resolve_shell(config.shell.program.as_deref(), &config.shell.args);
+/// Starts the configured shell, in `cwd` if given (else the home directory).
+/// Separate from [`TerminalView::new`] so that failures surface before a view
+/// is created.
+pub fn spawn_session(config: &Config, cwd: Option<PathBuf>) -> anyhow::Result<Spawned> {
+    let mut shell = resolve_shell(config.shell.program.as_deref(), &config.shell.args);
+    shell.cwd = cwd;
     // The real size is applied on first paint, once the layout is known.
     let initial = TermSize {
         cols: 80,
@@ -325,6 +328,11 @@ impl TerminalView {
 
     pub fn title(&self) -> &str {
         &self.title
+    }
+
+    /// The shell's working directory, for a new pane to start in.
+    pub fn cwd(&self) -> Option<PathBuf> {
+        self.session.cwd()
     }
 
     fn set_title(&mut self, title: String, cx: &mut Context<Self>) {

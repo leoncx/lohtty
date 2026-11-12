@@ -1,6 +1,7 @@
 //! Terminal session: PTY, VT state (alacritty_terminal), events, input encoding.
 //! Intentionally free of gpui so it can be unit tested.
 
+mod cwd;
 mod filter;
 pub mod input;
 #[cfg(feature = "kitty-graphics")]

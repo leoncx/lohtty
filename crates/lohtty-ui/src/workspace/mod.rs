@@ -297,9 +297,15 @@ impl Workspace {
 
     // --- Panes and tabs -------------------------------------------------------
 
-    /// Starts a shell in a new terminal view, or records the error.
+    /// Starts a shell in a new terminal view, or records the error. It starts
+    /// in the active pane's directory, so new tabs and splits open where the
+    /// user is.
     fn new_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Pane> {
-        let spawned = match spawn_session(&self.config) {
+        let cwd = self
+            .tabs
+            .get(self.active_tab)
+            .and_then(|tab| tab.active.read(cx).cwd());
+        let spawned = match spawn_session(&self.config, cwd) {
             Ok(spawned) => spawned,
             Err(e) => {
                 tracing::error!("failed to start shell: {e:#}");

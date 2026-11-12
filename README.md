@@ -5,7 +5,7 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 
 - Tabs and split panes, with the tabs in the title bar on Windows and macOS
   (like Windows Terminal). With a single tab, the title bar shows the window
-  title, centered.
+  title, centered. New tabs and splits start in the active pane's directory.
 - Search (literal or regex, case toggle, highlighted matches)
 - Themes, Tokyo Night by default, with live config reload
 - Background opacity and blur
@@ -271,6 +271,20 @@ Mouse:
   your environment. lohtty passes the environment through unchanged.
 - **Prompt icons show as boxes.** Install a Nerd Font (for example
   *Symbols Nerd Font Mono*) or list one in `font.fallbacks`.
+- **New tabs start in the home directory (Windows).** lohtty can't read
+  another process's directory on Windows, so the shell must report it with
+  OSC 9;9 or OSC 7. In PowerShell, add to your profile:
+
+  ```powershell
+  function prompt {
+    $loc = $executionContext.SessionState.Path.CurrentLocation
+    $osc = if ($loc.Provider.Name -eq 'FileSystem') { "`e]9;9;`"$($loc.ProviderPath)`"`e\" }
+    "$osc" + "PS $loc$('>' * ($nestedPromptLevel + 1)) "
+  }
+  ```
+
+  On macOS and Linux it works without setup. A shell that sends OSC 7 keeps
+  symbolic links in the path (`/tmp` rather than `/private/tmp`).
 - **Italic text shows upright (Linux, macOS).** The font has no italic face:
   lohtty can't slant it there (Windows does). Use a font that ships italics,
   such as DejaVu Sans Mono with its Oblique files (`fonts-dejavu-extra` on

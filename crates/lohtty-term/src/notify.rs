@@ -12,7 +12,8 @@
 //!
 //! The same scanner also picks up what the status protocol needs
 //! ([`crate::status`]): OSC 7501 reports and queries, the start of a shell
-//! prompt (OSC 133 A) and full resets (RIS, `ESC c`).
+//! prompt (OSC 133 A) and full resets (RIS, `ESC c`), and the shell's
+//! working directory (OSC 7, OSC 9;9; see [`crate::cwd`]).
 //!
 //! [`OscScanner`] only watches the output: the sequences still reach the
 //! parser, which ignores them.
@@ -38,6 +39,8 @@ pub enum OscEvent {
     PromptStart,
     /// A full reset (RIS).
     Reset,
+    /// The shell's working directory (OSC 7 or OSC 9;9).
+    WorkingDir(std::path::PathBuf),
 }
 
 /// Longest OSC kept; longer ones are skipped.
@@ -125,6 +128,10 @@ impl OscScanner {
         let osc = String::from_utf8_lossy(&self.osc).into_owned();
         let (code, rest) = osc.split_once(';').unwrap_or((&osc, ""));
         let event = match code {
+            "7" => crate::cwd::parse_osc7(rest).map(OscEvent::WorkingDir),
+            "9" if rest.starts_with("9;") => {
+                crate::cwd::parse_osc9_9(&rest[2..]).map(OscEvent::WorkingDir)
+            }
             "9" if rest == "4" || rest.starts_with("4;") => {
                 crate::status::parse_progress(rest).map(OscEvent::Progress)
             }
@@ -295,6 +302,21 @@ mod tests {
             vec![OscEvent::PromptStart]
         );
         assert_eq!(events(b"x\x1bcy"), vec![OscEvent::Reset]);
+    }
+
+    #[test]
+    fn working_directory() {
+        use std::path::PathBuf;
+        assert_eq!(
+            events(b"\x1b]7;file:///tmp/a%20b\x1b\\"),
+            vec![OscEvent::WorkingDir(PathBuf::from("/tmp/a b"))]
+        );
+        assert_eq!(
+            events(b"\x1b]9;9;\"C:\\x\"\x07"),
+            vec![OscEvent::WorkingDir(PathBuf::from("C:\\x"))]
+        );
+        // Not a notification either.
+        assert!(scan(b"\x1b]9;9;C:\\x\x07").is_empty());
     }
 
     fn note(title: Option<&str>, body: &str) -> Notification {

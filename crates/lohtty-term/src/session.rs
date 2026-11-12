@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -161,6 +162,9 @@ pub struct Session {
     win32_input: Arc<AtomicBool>,
     /// Program status records (OSC 7501).
     status: Arc<Mutex<StatusBoard>>,
+    /// The shell's process id, and the working directory it last reported.
+    pid: Option<u32>,
+    reported_cwd: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl Session {
@@ -194,8 +198,13 @@ impl Session {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "lohtty");
-        if let Some(home) = dirs::home_dir() {
-            cmd.cwd(home);
+        if let Some(dir) = shell
+            .cwd
+            .clone()
+            .filter(|d| d.is_dir())
+            .or_else(dirs::home_dir)
+        {
+            cmd.cwd(dir);
         }
 
         let mut child = pair
@@ -203,7 +212,8 @@ impl Session {
             .spawn_command(cmd)
             .with_context(|| format!("failed to spawn `{}`", shell.program))?;
         drop(pair.slave);
-        tracing::info!(program = %shell.program, pid = ?child.process_id(), "shell spawned");
+        let pid = child.process_id();
+        tracing::info!(program = %shell.program, ?pid, "shell spawned");
 
         let master = pair.master;
         let mut reader = master.try_clone_reader()?;
@@ -265,6 +275,8 @@ impl Session {
         let reader_win32_input = win32_input.clone();
         let status = Arc::new(Mutex::new(StatusBoard::default()));
         let reader_status = status.clone();
+        let reported_cwd = Arc::new(Mutex::new(None));
+        let reader_cwd = reported_cwd.clone();
         let reader_term = term.clone();
         let reader_pty_tx = pty_tx.clone();
         thread::Builder::new()
@@ -310,6 +322,10 @@ impl Session {
                             OscEvent::Progress(progress) => board.progress(progress),
                             OscEvent::PromptStart => board.prompt(),
                             OscEvent::Reset => board.reset(),
+                            OscEvent::WorkingDir(dir) => {
+                                *reader_cwd.lock().unwrap() = Some(dir);
+                                false
+                            }
                         };
                     }
                     if status_changed {
@@ -371,9 +387,20 @@ impl Session {
                 program: shell.program.clone(),
                 win32_input,
                 status,
+                pid,
+                reported_cwd,
             },
             events_rx,
         ))
+    }
+
+    /// The shell's working directory, to start a new pane in (see
+    /// [`crate::cwd`]). `None` when neither the shell reported it nor the
+    /// platform can read it.
+    pub fn cwd(&self) -> Option<PathBuf> {
+        let reported = self.reported_cwd.lock().unwrap().clone();
+        let process = self.pid.and_then(crate::cwd::process_cwd);
+        crate::cwd::pick(reported.as_deref(), process.as_deref())
     }
 
     /// The program running in this session, as given to [`Session::spawn`].
