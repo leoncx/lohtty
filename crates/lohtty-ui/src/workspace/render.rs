@@ -24,6 +24,8 @@ const CAPTION_BUTTON_WIDTH: f32 = 46.0;
 const TOOL_BUTTON_WIDTH: f32 = 36.0;
 const USAGE_BUTTON_WIDTH: f32 = 30.0;
 const NEW_TAB_WIDTH: f32 = 36.0;
+/// Empty space kept right of the tabs, to drag the window by (custom title bar).
+const DRAG_GAP: f32 = 32.0;
 /// Room left for the macOS traffic lights at the start of the tab bar.
 const TRAFFIC_LIGHTS_WIDTH: f32 = 78.0;
 
@@ -108,7 +110,8 @@ impl Workspace {
     /// empty space drags the window, with the caption buttons on the right
     /// (Windows) or the traffic lights on the left (macOS).
     /// There, a single tab shows as the window title, centered, and the tab
-    /// strip appears once a second tab opens.
+    /// strip appears once a second tab opens. The tabs share the strip
+    /// equally (two take half each), down to a minimum width.
     fn render_tab_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = &self.theme;
         let bar = self.translucent(to_rgba(mix(t.background, t.foreground, 0.06)));
@@ -152,7 +155,8 @@ impl Workspace {
             .flex()
             .flex_row()
             .min_w_0()
-            .flex_shrink()
+            .when(single, |el| el.flex_shrink())
+            .when(!single, |el| el.flex_1())
             .overflow_hidden()
             .h_full()
             .children(
@@ -174,9 +178,9 @@ impl Workspace {
                             .pl_3()
                             .pr_1()
                             .h_full()
+                            .flex_1()
+                            .flex_basis(px(0.0))
                             .min_w(px(90.0))
-                            .max_w(px(220.0))
-                            .flex_shrink()
                             .border_b_2()
                             .border_color(if active { accent } else { bar })
                             .bg(if active { active_bg } else { bar })
@@ -281,16 +285,23 @@ impl Workspace {
             .text_sm()
             .pl(px(lights))
             .children(centered_title)
-            .child(self.inert_while_settings(tabs))
             .child(
-                // Empty space. With the custom title bar it drags the window
+                self.inert_while_settings(tabs)
+                    .when(!single, |el| el.flex_1()),
+            )
+            .child(
+                // Empty space: under the single tab's title, else a gap right
+                // of the tabs. With the custom title bar it drags the window
                 // (double-click maximizes, right-click opens the system menu);
                 // a thin strip on top is left out so the top edge still resizes.
                 double_click_zooms(div())
                     .flex()
                     .flex_col()
-                    .flex_1()
-                    .min_w(px(32.0))
+                    .map(|el| match (single, CUSTOM_TITLEBAR) {
+                        (true, _) => el.flex_1().min_w(px(DRAG_GAP)),
+                        (false, true) => el.flex_none().w(px(DRAG_GAP)),
+                        (false, false) => el.flex_none(),
+                    })
                     .h_full()
                     .when(CUSTOM_TITLEBAR, |el| {
                         el.child(div().flex_none().h(px(4.0)))
@@ -368,7 +379,7 @@ impl Workspace {
     /// mouse while the settings dialog is open, like the keyboard shortcuts.
     /// The gear (refocuses the dialog), the drag area and the caption buttons
     /// stay usable.
-    fn inert_while_settings(&self, content: impl IntoElement) -> impl IntoElement {
+    fn inert_while_settings(&self, content: impl IntoElement) -> gpui::Div {
         div()
             .relative()
             .flex()
