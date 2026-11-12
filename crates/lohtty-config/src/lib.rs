@@ -33,6 +33,7 @@ pub struct Config {
     pub scrollback: usize,
     pub graphics: GraphicsConfig,
     pub notifications: NotificationsConfig,
+    pub usage: UsageConfig,
 }
 
 impl Default for Config {
@@ -45,6 +46,7 @@ impl Default for Config {
             scrollback: 10_000,
             graphics: GraphicsConfig::default(),
             notifications: NotificationsConfig::default(),
+            usage: UsageConfig::default(),
         }
     }
 }
@@ -61,6 +63,31 @@ pub struct NotificationsConfig {
 impl Default for NotificationsConfig {
     fn default() -> Self {
         Self { desktop: true }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct UsageConfig {
+    /// Claude's session and weekly limits on the title bar, read with
+    /// Claude Code's sign-in (shown only when Claude Code is signed in).
+    pub claude: bool,
+    /// Codex's limits, from its session logs (shown only once Codex ran).
+    pub codex: bool,
+    /// Seconds between two requests for Claude's usage (at least 60).
+    pub refresh: u64,
+}
+
+/// The shortest `usage.refresh`.
+pub const MIN_USAGE_REFRESH: u64 = 60;
+
+impl Default for UsageConfig {
+    fn default() -> Self {
+        Self {
+            claude: true,
+            codex: true,
+            refresh: 120,
+        }
     }
 }
 
@@ -229,6 +256,22 @@ mod tests {
             cfg.font.fallbacks.as_deref(),
             Some(&["Symbols Nerd Font Mono".to_string()][..])
         );
+    }
+
+    #[test]
+    fn usage_section() {
+        assert_eq!(Config::default().usage, UsageConfig::default());
+        let cfg = Config::parse(
+            "[usage]
+codex = false
+refresh = 300
+",
+            "x".into(),
+        )
+        .unwrap();
+        assert!(cfg.usage.claude);
+        assert!(!cfg.usage.codex);
+        assert_eq!(cfg.usage.refresh, 300);
     }
 
     #[test]

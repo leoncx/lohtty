@@ -18,6 +18,8 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 - OSC 8 hyperlinks
 - Coding agents' session status on their tab (working, waiting for you, done,
   failed), through the Program Status Protocol (OSC 7501)
+- Claude and Codex usage limits on the title bar: the session and the week
+  as a donut, with the time left until each resets
 - Attention alerts for coding agents and other programs: a tab mark, and on
   Windows a taskbar flash and desktop notification when lohtty isn't in front
 - Images through the kitty graphics protocol (PNG, RGB/RGBA; direct, file and
@@ -137,6 +139,11 @@ kitty = true               # kitty graphics protocol (new tabs and panes)
 
 [notifications]
 desktop = true             # desktop notifications when lohtty isn't in front (Windows)
+
+[usage]
+claude = true              # Claude's limits on the title bar (needs Claude Code signed in)
+codex = true               # Codex's limits (from its session logs)
+refresh = 120              # seconds between two checks of Claude's usage (60 at least)
 ```
 
 ### Themes
@@ -198,6 +205,24 @@ looking at also triggers the alerts above. Nothing needs to be turned on.
 percentage. On Windows, lohtty's taskbar button shows the most urgent status
 of all tabs: a progress bar, a busy marquee, yellow when a program waits for
 you, red on error.
+
+**Usage limits.** On the right of the title bar (the tab bar outside
+Windows), a donut per agent shows how much of your plan's limits is used: the
+outer ring is the current 5-hour session, the inner ring the week. They turn
+yellow from 70 % and red from 90 %. Hovering shows each window's use and the
+time left until it resets ("resets in 2 h 13 min"); clicking checks again. An
+agent shows only once it is set up on the machine:
+
+- **Claude:** lohtty reads Claude Code's sign-in (`~/.claude/.credentials.json`,
+  or the Keychain on macOS) and asks the same usage service as Claude Code's
+  `/usage`, every 2 minutes. It never renews the sign-in itself; if it has
+  expired, the tooltip says so until you run Claude Code again. This service
+  isn't documented by Anthropic and may change.
+- **Codex:** read from Codex's session logs (`~/.codex/sessions`), which hold
+  the limits as of Codex's last answer, so they don't update while Codex isn't
+  running.
+
+Turn either off in Settings, or with `usage.claude` / `usage.codex`.
 
 **Shift+Enter** inserts a new line in agents' prompts instead of sending
 them. lohtty supports the kitty keyboard protocol (the level programs use to

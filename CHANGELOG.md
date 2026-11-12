@@ -11,6 +11,19 @@ version and changelog section, and uses that section as the release notes.
 
 ## [Unreleased]
 
+### Added
+
+- Usage meter: Claude's and Codex's session (5-hour) and weekly limits as a
+  donut per agent on the right of the title bar, with a tooltip giving each
+  window's use and the time left until it resets. Claude's come from Claude
+  Code's sign-in, Codex's from its session logs. `[usage]` in `config.toml`,
+  and toggles in Settings.
+
+### Fixed
+
+- The single tab's centered title no longer runs under the title-bar buttons
+  in narrow windows.
+
 ## [0.1.0] - 2026-11-10
 
 ### Added

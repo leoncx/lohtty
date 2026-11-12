@@ -391,6 +391,19 @@ impl Render for SettingsDialog {
                     c.font.ligatures = !c.font.ligatures
                 }),
             ),
+            self.section("Usage meter (title bar)"),
+            self.row(
+                "Claude",
+                self.toggle("usage-claude", d.usage.claude, cx, |c| {
+                    c.usage.claude = !c.usage.claude
+                }),
+            ),
+            self.row(
+                "Codex",
+                self.toggle("usage-codex", d.usage.codex, cx, |c| {
+                    c.usage.codex = !c.usage.codex
+                }),
+            ),
             self.section("Shell (new tabs and panes)"),
             self.row("Program", self.program.clone()),
             self.row("Arguments", self.args.clone()),

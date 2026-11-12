@@ -11,11 +11,11 @@ use gpui::{
     App, AppContext, Bounds, Context, Entity, EntityId, Focusable, IsZero, KeyBinding, Pixels,
     Subscription, Task, Window, actions,
 };
-use lohtty_config::{Config, ConfigWatcher};
+use lohtty_config::{Config, ConfigWatcher, MIN_USAGE_REFRESH, UsageConfig};
 use lohtty_term::notify::Notification;
 use lohtty_term::status::{Kind, Shown, State};
 use lohtty_theme::Theme;
-use lohtty_usage::{Poller, PollerOptions, Update};
+use lohtty_usage::{Poller, PollerOptions, Provider, Update};
 
 use crate::notifier::{self, Notifier, TaskbarProgress};
 use crate::pane_tree::{Axis, Direction, PaneTree, Removed, SplitId};
@@ -163,6 +163,9 @@ pub struct Workspace {
     /// Coding agents' usage limits, shown on the title bar.
     usage: UsageBoard,
     usage_poller: Option<Poller>,
+    /// Where pollers send their updates (a new poller starts when the
+    /// `[usage]` settings change).
+    usage_tx: async_channel::Sender<Update>,
     _usage_updates: Task<()>,
     _watcher: Option<ConfigWatcher>,
     _reload: Task<()>,
@@ -223,15 +226,15 @@ impl Workspace {
 
         // Usage limits, polled on a background thread.
         let (usage_tx, usage_rx) = async_channel::unbounded::<Update>();
-        let usage_poller = Poller::spawn(PollerOptions::default(), move |update| {
-            let _ = usage_tx.try_send(update);
-        })
-        .inspect_err(|e| tracing::warn!("usage meter disabled: {e}"))
-        .ok();
+        let usage_poller = spawn_usage_poller(&config.usage, &usage_tx);
         let usage_updates = cx.spawn(async move |this, cx| {
             while let Ok(update) = usage_rx.recv().await {
                 let applied = this.update(cx, |this, cx| {
-                    if this.usage.apply(update) {
+                    // A poller stopped after a settings change may still
+                    // deliver a last update.
+                    if usage_enabled(&this.config.usage, update.provider)
+                        && this.usage.apply(update)
+                    {
                         cx.notify();
                     }
                 });
@@ -258,6 +261,7 @@ impl Workspace {
             spinner: None,
             usage: UsageBoard::default(),
             usage_poller,
+            usage_tx,
             _usage_updates: usage_updates,
             _watcher: watcher,
             _reload: reload,
@@ -685,6 +689,13 @@ impl Workspace {
         };
 
         tracing::info!(theme = %theme.name, "config reloaded");
+        if config.usage != self.config.usage {
+            // Stop the old poller before starting the new one.
+            self.usage_poller = None;
+            self.usage_poller = spawn_usage_poller(&config.usage, &self.usage_tx);
+            self.usage
+                .retain(|provider| usage_enabled(&config.usage, provider));
+        }
         window.set_background_appearance(window_background(&config.window));
         for pane in self.tabs.iter().flat_map(|t| t.panes.panes()) {
             pane.update(cx, |view, cx| view.apply_config(&config, theme.clone(), cx));
@@ -694,4 +705,30 @@ impl Workspace {
         self.error = None;
         cx.notify();
     }
+}
+
+fn usage_enabled(usage: &UsageConfig, provider: Provider) -> bool {
+    match provider {
+        Provider::Claude => usage.claude,
+        Provider::Codex => usage.codex,
+    }
+}
+
+/// A poller for the enabled agents, or none if the meter is off.
+fn spawn_usage_poller(usage: &UsageConfig, tx: &async_channel::Sender<Update>) -> Option<Poller> {
+    if !usage.claude && !usage.codex {
+        return None;
+    }
+    let options = PollerOptions {
+        claude: usage.claude,
+        codex: usage.codex,
+        claude_interval: Duration::from_secs(usage.refresh.max(MIN_USAGE_REFRESH)),
+        ..PollerOptions::default()
+    };
+    let tx = tx.clone();
+    Poller::spawn(options, move |update| {
+        let _ = tx.try_send(update);
+    })
+    .inspect_err(|e| tracing::warn!("usage meter disabled: {e}"))
+    .ok()
 }

@@ -78,6 +78,11 @@ impl UsageBoard {
         before != after
     }
 
+    /// Keeps only the providers `keep` accepts.
+    pub fn retain(&mut self, keep: impl Fn(Provider) -> bool) {
+        self.entries.retain(|(p, _)| keep(*p));
+    }
+
     pub fn entries(&self) -> &[(Provider, Entry)] {
         &self.entries
     }
@@ -431,6 +436,9 @@ mod tests {
         assert!(board.apply(update(Provider::Claude, ProviderState::Unavailable)));
         assert!(!board.apply(update(Provider::Claude, ProviderState::Unavailable)));
         assert_eq!(board.entries().len(), 1);
+
+        board.retain(|p| p != Provider::Codex);
+        assert!(board.entries().is_empty());
     }
 
     #[test]

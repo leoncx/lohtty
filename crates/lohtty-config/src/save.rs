@@ -74,6 +74,10 @@ impl Config {
         set(window, "blur", self.window.blur.into());
         set(window, "padding", round2(self.window.padding).into());
 
+        let usage = table(&mut doc, "usage");
+        set(usage, "claude", self.usage.claude.into());
+        set(usage, "codex", self.usage.codex.into());
+
         Ok(doc.to_string())
     }
 }
@@ -113,6 +117,7 @@ mod tests {
         cfg.window.opacity = 0.85;
         cfg.shell.program = Some("pwsh.exe".into());
         cfg.shell.args = vec!["-NoLogo".into()];
+        cfg.usage.codex = false;
         let out = cfg.apply_to("").unwrap();
         let back = Config::parse(&out, "x".into()).unwrap();
         assert_eq!(back, cfg);
