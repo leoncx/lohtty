@@ -182,8 +182,16 @@ fn ctrl_byte(key: &str) -> Option<u8> {
     })
 }
 
+/// Whether Option+Left/Right and Option+Delete send `ESC b`, `ESC f` and
+/// `ESC d` (word left, word right, delete word), as Terminal.app and Ghostty
+/// do on macOS. Shells bind these by default; the xterm `CSI 1;3D` they would
+/// otherwise get is unbound in zsh and bash. Elsewhere Alt+Arrow moves focus
+/// between panes.
+const OPTION_WORD_KEYS: bool = cfg!(target_os = "macos");
+
 fn named_key(k: &KeyInput, mode: TermMode) -> Option<Vec<u8>> {
     let m = k.modifier_param();
+    let word = OPTION_WORD_KEYS && k.alt && !k.ctrl && !k.shift;
     let app_cursor = mode.contains(TermMode::APP_CURSOR);
 
     // CSI 1;m X  (or SS3 X / CSI X without modifiers)
@@ -222,11 +230,14 @@ fn named_key(k: &KeyInput, mode: TermMode) -> Option<Vec<u8>> {
         "backspace" => alt_prefixed(k.alt, b"\x7f"),
         "up" => cursor('A'),
         "down" => cursor('B'),
+        "right" if word => b"\x1bf".to_vec(),
+        "left" if word => b"\x1bb".to_vec(),
         "right" => cursor('C'),
         "left" => cursor('D'),
         "home" => cursor('H'),
         "end" => cursor('F'),
         "insert" => tilde(2),
+        "delete" if word => b"\x1bd".to_vec(),
         "delete" => tilde(3),
         "pageup" => tilde(5),
         "pagedown" => tilde(6),
@@ -457,6 +468,24 @@ mod tests {
         assert_eq!(enc(up), b"\x1b[A");
         assert_eq!(encode_key(&up, TermMode::APP_CURSOR).unwrap(), b"\x1bOA");
         assert_eq!(enc(KeyInput { ctrl: true, ..up }), b"\x1b[1;5A");
+    }
+
+    #[test]
+    fn option_arrows_move_by_word_on_macos() {
+        let alt = |key| named(key, false, false, true);
+        let (left, right, delete): (&[u8], &[u8], &[u8]) = if OPTION_WORD_KEYS {
+            (b"\x1bb", b"\x1bf", b"\x1bd")
+        } else {
+            (b"\x1b[1;3D", b"\x1b[1;3C", b"\x1b[3;3~")
+        };
+        assert_eq!(enc(alt("left")), left);
+        assert_eq!(enc(alt("right")), right);
+        assert_eq!(enc(alt("delete")), delete);
+        // With the kitty protocol too: arrows keep their legacy encodings.
+        assert_eq!(kitty(alt("left")), left);
+        // Other modifiers keep the xterm form (Option+Shift selects, say).
+        assert_eq!(enc(named("left", true, false, true)), b"\x1b[1;4D");
+        assert_eq!(enc(named("left", false, true, true)), b"\x1b[1;7D");
     }
 
     #[test]

@@ -247,7 +247,8 @@ for copy, paste, search and tabs.
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 | Go to tab 1–9 | Ctrl+Alt+1 … 9 (9 = last tab) |
 | Split right / split down | Alt+Shift+= / Alt+Shift+- |
-| Move focus between panes | Alt+Arrow, or Ctrl+Alt+Arrow |
+| Move focus between panes | Alt+Arrow, or Ctrl+Alt+Arrow (macOS: Cmd+Option+Arrow) |
+| Word left / right, delete the next word (macOS, in the shell) | Option+Left / Option+Right, Option+Fn+Delete |
 | Zoom the pane (fill the tab) / show all panes | Ctrl+Shift+Z (macOS: Cmd+Shift+Enter) |
 | Close pane | Ctrl+Shift+W |
 | Settings | Ctrl+, |
