@@ -11,6 +11,7 @@ mod settings;
 mod terminal_view;
 mod text_field;
 mod tooltip;
+mod usage_meter;
 mod workspace;
 
 use gpui::{App, WindowBackgroundAppearance};

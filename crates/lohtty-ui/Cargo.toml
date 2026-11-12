@@ -9,6 +9,7 @@ gpui.workspace = true
 lohtty-config.workspace = true
 lohtty-theme.workspace = true
 lohtty-term.workspace = true
+lohtty-usage.workspace = true
 alacritty_terminal = "0.26"
 async-channel = "2.5"
 anyhow.workspace = true

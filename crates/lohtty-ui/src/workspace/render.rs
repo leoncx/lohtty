@@ -13,10 +13,17 @@ use crate::CUSTOM_TITLEBAR;
 use crate::colors::{mix, to_rgba};
 use crate::pane_tree::Node;
 use crate::tooltip::Tooltip;
+use crate::usage_meter::{self, Palette, UsageTooltip};
 
 /// Width of the divider hit area between panes, in pixels.
 const DIVIDER: f32 = 5.0;
 const TAB_BAR_HEIGHT: f32 = 34.0;
+/// Widths of the title-bar buttons: caption (Windows), tools (split,
+/// settings), usage donuts, and the new-tab button.
+const CAPTION_BUTTON_WIDTH: f32 = 46.0;
+const TOOL_BUTTON_WIDTH: f32 = 36.0;
+const USAGE_BUTTON_WIDTH: f32 = 30.0;
+const NEW_TAB_WIDTH: f32 = 36.0;
 
 /// A 14×12 pane outline divided in two: side by side for [`Axis::Horizontal`]
 /// (split right), stacked for [`Axis::Vertical`] (split down).
@@ -171,6 +178,26 @@ impl Workspace {
         // The single tab's title, centered on the whole bar. Only the text
         // takes the mouse, as part of the drag area, so the buttons on either
         // side stay clickable.
+        // The single tab's title is centered on the window when it fits
+        // between the buttons on either side; otherwise it is centered in the
+        // space between them. 40 px leave room for its status and dot.
+        let (title_left, title_right, title_max_width) = {
+            let bar = f32::from(window.viewport_size().width);
+            let left = NEW_TAB_WIDTH + 8.0;
+            let right = if CUSTOM_TITLEBAR {
+                3.0 * CAPTION_BUTTON_WIDTH
+            } else {
+                0.0
+            } + 3.0 * TOOL_BUTTON_WIDTH
+                + self.usage.entries().len() as f32 * USAGE_BUTTON_WIDTH
+                + 8.0;
+            let centered = bar - 2.0 * left.max(right) - 40.0;
+            if centered >= 160.0 {
+                (0.0, 0.0, centered.min(bar / 2.0))
+            } else {
+                (left, right, (bar - left - right - 40.0).max(0.0))
+            }
+        };
         let centered_title = single.then(|| {
             let title = self.tabs[0].active.read(cx).title().to_owned();
             let waiting = self.tab_needs_attention(&self.tabs[0]);
@@ -178,8 +205,9 @@ impl Workspace {
             div()
                 .absolute()
                 .top_0()
-                .left_0()
-                .size_full()
+                .left(px(title_left))
+                .right(px(title_right))
+                .h_full()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -188,7 +216,7 @@ impl Workspace {
                 .children(attention_dot(waiting))
                 .child(
                     div()
-                        .max_w(relative(0.5))
+                        .max_w(px(title_max_width))
                         .truncate()
                         .text_color(fg)
                         .window_control_area(WindowControlArea::Drag)
@@ -221,6 +249,7 @@ impl Workspace {
                             .child(div().flex_1().window_control_area(WindowControlArea::Drag))
                     }),
             )
+            .child(self.render_usage(cx))
             .child(self.inert_while_settings(self.render_split_buttons(cx)))
             .child(self.render_settings_button(window, cx))
             .when(CUSTOM_TITLEBAR, |el| {
@@ -306,6 +335,37 @@ impl Workspace {
             })
     }
 
+    /// A donut per coding agent with usage limits; hovering shows the
+    /// details, clicking polls again.
+    fn render_usage(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = &self.theme;
+        let hover = to_rgba(mix(t.background, t.foreground, 0.12));
+        let palette = Palette::new(t);
+        div().flex().flex_row().flex_none().h_full().children(
+            self.usage
+                .entries()
+                .iter()
+                .enumerate()
+                .map(|(i, (provider, entry))| {
+                    div()
+                        .id(("usage", i))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(USAGE_BUTTON_WIDTH))
+                        .h_full()
+                        .hover(|s| s.bg(hover))
+                        .tooltip(UsageTooltip::build(*provider, entry.clone(), palette))
+                        .child(usage_meter::donut(*provider, entry, palette))
+                        .on_click(cx.listener(|this, _, _, _| {
+                            if let Some(poller) = &this.usage_poller {
+                                poller.refresh();
+                            }
+                        }))
+                }),
+        )
+    }
+
     /// Gear button opening the settings dialog.
     fn render_settings_button(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = &self.theme;
@@ -329,7 +389,7 @@ impl Workspace {
             .flex_none()
             .items_center()
             .justify_center()
-            .w(px(36.0))
+            .w(px(TOOL_BUTTON_WIDTH))
             .h_full()
             .text_color(color)
             .text_size(size)
@@ -359,7 +419,7 @@ impl Workspace {
                 .flex_none()
                 .items_center()
                 .justify_center()
-                .w(px(36.0))
+                .w(px(TOOL_BUTTON_WIDTH))
                 .h_full()
                 .hover(|s| s.bg(hover))
                 .tooltip(Tooltip::text(tip, t))
@@ -412,7 +472,7 @@ impl Workspace {
                 .flex_none()
                 .items_center()
                 .justify_center()
-                .w(px(46.0))
+                .w(px(CAPTION_BUTTON_WIDTH))
                 .h_full()
                 .font_family(font.clone())
                 .text_size(px(10.0))

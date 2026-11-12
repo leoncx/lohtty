@@ -15,11 +15,13 @@ use lohtty_config::{Config, ConfigWatcher};
 use lohtty_term::notify::Notification;
 use lohtty_term::status::{Kind, Shown, State};
 use lohtty_theme::Theme;
+use lohtty_usage::{Poller, PollerOptions, Update};
 
 use crate::notifier::{self, Notifier, TaskbarProgress};
 use crate::pane_tree::{Axis, Direction, PaneTree, Removed, SplitId};
 use crate::settings::{SettingsDialog, SettingsEvent};
 use crate::terminal_view::{TerminalEvent, spawn_session};
+use crate::usage_meter::UsageBoard;
 use crate::{TerminalView, load_theme, window_background};
 
 actions!(
@@ -158,6 +160,10 @@ pub struct Workspace {
     /// pane reports work in progress.
     spinner_frame: usize,
     spinner: Option<Task<()>>,
+    /// Coding agents' usage limits, shown on the title bar.
+    usage: UsageBoard,
+    usage_poller: Option<Poller>,
+    _usage_updates: Task<()>,
     _watcher: Option<ConfigWatcher>,
     _reload: Task<()>,
     _notification_clicks: Task<()>,
@@ -215,6 +221,26 @@ impl Workspace {
             }
         });
 
+        // Usage limits, polled on a background thread.
+        let (usage_tx, usage_rx) = async_channel::unbounded::<Update>();
+        let usage_poller = Poller::spawn(PollerOptions::default(), move |update| {
+            let _ = usage_tx.try_send(update);
+        })
+        .inspect_err(|e| tracing::warn!("usage meter disabled: {e}"))
+        .ok();
+        let usage_updates = cx.spawn(async move |this, cx| {
+            while let Ok(update) = usage_rx.recv().await {
+                let applied = this.update(cx, |this, cx| {
+                    if this.usage.apply(update) {
+                        cx.notify();
+                    }
+                });
+                if applied.is_err() {
+                    break;
+                }
+            }
+        });
+
         let mut this = Self {
             config,
             theme,
@@ -230,6 +256,9 @@ impl Workspace {
             notifier,
             spinner_frame: 0,
             spinner: None,
+            usage: UsageBoard::default(),
+            usage_poller,
+            _usage_updates: usage_updates,
             _watcher: watcher,
             _reload: reload,
             _notification_clicks: notification_clicks,
