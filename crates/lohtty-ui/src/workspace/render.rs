@@ -49,6 +49,31 @@ fn split_icon(axis: Axis, color: Rgba) -> impl IntoElement {
     }
 }
 
+/// A 14×12 pane outline: one pane in the corner of the frame (zoom it), or
+/// filling it (zoomed: restore the splits).
+fn zoom_icon(zoomed: bool, color: Rgba) -> impl IntoElement {
+    let frame = div()
+        .relative()
+        .w(px(14.0))
+        .h(px(12.0))
+        .border_1()
+        .border_color(color)
+        .rounded(px(2.0));
+    if zoomed {
+        frame.bg(color)
+    } else {
+        frame.child(
+            div()
+                .absolute()
+                .top(px(1.0))
+                .left(px(1.0))
+                .w(px(5.0))
+                .h(px(4.0))
+                .bg(color),
+        )
+    }
+}
+
 /// Windows 11 caption glyphs, or the Windows 10 font with the same code points.
 fn caption_icon_font(window: &Window) -> SharedString {
     static FONT: OnceLock<SharedString> = OnceLock::new();
@@ -188,7 +213,7 @@ impl Workspace {
                 3.0 * CAPTION_BUTTON_WIDTH
             } else {
                 0.0
-            } + 3.0 * TOOL_BUTTON_WIDTH
+            } + self.tool_buttons() as f32 * TOOL_BUTTON_WIDTH
                 + self.usage.entries().len() as f32 * USAGE_BUTTON_WIDTH
                 + 8.0;
             let centered = bar - 2.0 * left.max(right) - 40.0;
@@ -402,7 +427,18 @@ impl Workspace {
             )
     }
 
-    /// "Split right" and "split down" buttons, acting on the active pane.
+    /// The tool buttons on the title bar: split right, split down, settings,
+    /// and zoom when the active tab has splits.
+    fn tool_buttons(&self) -> usize {
+        let zoom = self
+            .tabs
+            .get(self.active_tab)
+            .is_some_and(|tab| tab.has_splits());
+        3 + usize::from(zoom)
+    }
+
+    /// "Zoom pane" (shown when the active tab has splits), "split right" and
+    /// "split down" buttons, acting on the active pane.
     fn render_split_buttons(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t = &self.theme;
         let hover = to_rgba(mix(t.background, t.foreground, 0.12));
@@ -426,11 +462,44 @@ impl Workspace {
                 .child(split_icon(axis, icon_color))
         };
 
+        let zoom_keys = if cfg!(target_os = "macos") {
+            "Cmd+Shift+Enter"
+        } else {
+            "Ctrl+Shift+Z"
+        };
+        let zoom = self
+            .tabs
+            .get(self.active_tab)
+            .filter(|tab| tab.has_splits())
+            .map(|tab| {
+                let zoomed = tab.is_zoomed();
+                let (color, tip) = if zoomed {
+                    (to_rgba(t.ansi[4]), format!("Show all panes ({zoom_keys})"))
+                } else {
+                    (icon_color, format!("Zoom pane ({zoom_keys})"))
+                };
+                div()
+                    .id("zoom-pane")
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .justify_center()
+                    .w(px(TOOL_BUTTON_WIDTH))
+                    .h_full()
+                    .hover(|s| s.bg(hover))
+                    .tooltip(Tooltip::text(tip, t))
+                    .child(zoom_icon(zoomed, color))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.toggle_pane_zoom(&TogglePaneZoom, window, cx)
+                    }))
+            });
+
         div()
             .flex()
             .flex_row()
             .flex_none()
             .h_full()
+            .children(zoom)
             .child(
                 button(
                     "split-right",
@@ -592,6 +661,7 @@ impl Render for Workspace {
         notifier::taskbar_progress(window, self.taskbar_progress(cx));
         let theme = &self.theme;
         let body = match self.tabs.get(self.active_tab) {
+            Some(tab) if tab.is_zoomed() => self.render_node(&Node::Leaf(tab.active.clone()), cx),
             Some(tab) => self.render_node(tab.panes.root(), cx),
             None => div()
                 .p_4()
@@ -618,6 +688,7 @@ impl Render for Workspace {
                     .on_action(cx.listener(Self::split_right))
                     .on_action(cx.listener(Self::split_down))
                     .on_action(cx.listener(Self::close_pane))
+                    .on_action(cx.listener(Self::toggle_pane_zoom))
                     .on_action(cx.listener(|this, _: &FocusLeft, w, cx| {
                         this.focus_direction(Direction::Left, w, cx)
                     }))

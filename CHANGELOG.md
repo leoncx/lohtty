@@ -18,6 +18,9 @@ version and changelog section, and uses that section as the release notes.
   window's use and the time left until it resets. Claude's come from Claude
   Code's sign-in, Codex's from its session logs. `[usage]` in `config.toml`,
   and toggles in Settings.
+- Pane zoom: Ctrl+Shift+Z (macOS: Cmd+Shift+Enter) or the title-bar button
+  shows the active pane alone, filling the tab, and toggles back to the
+  splits. The other panes keep running.
 
 ### Fixed
 

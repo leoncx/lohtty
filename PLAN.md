@@ -193,6 +193,7 @@ Each milestone ends with a runnable build.
 - Workspace, TabBar, and PaneGroup split tree with focus management and divider dragging.
 - Per-pane title, with the tab showing the active pane's title.
 - Closing the last pane closes the tab, and closing the last tab closes the window (configurable).
+- **Pane zoom** (added 2026-11-12): `TogglePaneZoom` (Ctrl+Shift+Z like WezTerm; macOS Cmd+Shift+Enter like iTerm2) and a title-bar button left of the split buttons, shown only when the active tab has splits (outline icon; filled and accent-colored while zoomed). `Tab::zoomed` renders the active pane alone as a leaf; the others keep running unrendered and get their size back when shown. Zoom ends when splitting (the new pane must show), moving focus by direction (as tmux), closing the zoomed pane, or a notification bringing another pane forward; a hidden pane exiting keeps it. The centered title's room counts the extra button. Live (482 px window): split → zoom → restore → zoom → Ctrl+Alt+Left left the zoom and focused the left pane; `$Host.UI.RawUI.WindowSize.Width` read 26 columns split, 56 zoomed, 26 restored.
 
 *Implementation notes from M3:*
 - `pane_tree.rs` is a pure, generic split tree with unit tests. Splitting in the same direction adds a sibling instead of nesting. Removing a pane redistributes its space proportionally, and a split left with one child collapses. Focus by direction uses the actual layout geometry.

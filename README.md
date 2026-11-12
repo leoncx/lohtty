@@ -247,6 +247,7 @@ for copy, paste, search and tabs.
 | Go to tab 1–9 | Ctrl+Alt+1 … 9 (9 = last tab) |
 | Split right / split down | Alt+Shift+= / Alt+Shift+- |
 | Move focus between panes | Alt+Arrow, or Ctrl+Alt+Arrow |
+| Zoom the pane (fill the tab) / show all panes | Ctrl+Shift+Z (macOS: Cmd+Shift+Enter) |
 | Close pane | Ctrl+Shift+W |
 | Settings | Ctrl+, |
 
@@ -256,6 +257,9 @@ Mouse:
 - Ctrl+click opens a hyperlink.
 - Middle-click on a tab closes it.
 - Drag a divider to resize panes.
+- With split panes, the zoom button on the title bar shows the active pane
+  alone, filling the tab; click it again to show all panes. Splitting,
+  moving to another pane or closing the zoomed one also shows them all.
 - Shift+drag selects text even when an app captures the mouse.
 
 ## Troubleshooting

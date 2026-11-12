@@ -48,6 +48,7 @@ actions!(
         ActivateTab8,
         ActivateTab9,
         OpenSettings,
+        TogglePaneZoom,
     ]
 );
 
@@ -69,6 +70,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
             KeyBinding::new("cmd-alt-right", FocusRight, ctx),
             KeyBinding::new("cmd-alt-up", FocusUp, ctx),
             KeyBinding::new("cmd-alt-down", FocusDown, ctx),
+            // iTerm2's "maximize active pane".
+            KeyBinding::new("cmd-shift-enter", TogglePaneZoom, ctx),
         ]
     } else {
         vec![
@@ -90,6 +93,8 @@ pub fn key_bindings() -> Vec<KeyBinding> {
             KeyBinding::new("ctrl-alt-right", FocusRight, ctx),
             KeyBinding::new("ctrl-alt-up", FocusUp, ctx),
             KeyBinding::new("ctrl-alt-down", FocusDown, ctx),
+            // WezTerm's pane zoom.
+            KeyBinding::new("ctrl-shift-z", TogglePaneZoom, ctx),
         ]
     };
     bindings.extend([
@@ -129,6 +134,19 @@ type Pane = Entity<TerminalView>;
 struct Tab {
     panes: PaneTree<Pane>,
     active: Pane,
+    /// The active pane fills the tab; the others keep running, hidden.
+    zoomed: bool,
+}
+
+impl Tab {
+    /// Whether the active pane is shown alone (only meaningful with splits).
+    fn is_zoomed(&self) -> bool {
+        self.zoomed && self.has_splits()
+    }
+
+    fn has_splits(&self) -> bool {
+        matches!(self.panes.root(), crate::pane_tree::Node::Split(_))
+    }
 }
 
 /// A divider being dragged: the split and the index of the child before it.
@@ -385,7 +403,12 @@ impl Workspace {
         }) else {
             return;
         };
-        self.tabs[index].active = pane;
+        let tab = &mut self.tabs[index];
+        if tab.active != pane {
+            // Another pane than the zoomed one: show the splits again.
+            tab.zoomed = false;
+        }
+        tab.active = pane;
         self.activate_tab(index, window, cx);
     }
 
@@ -472,6 +495,7 @@ impl Workspace {
         self.tabs.push(Tab {
             panes: PaneTree::new(pane.clone()),
             active: pane,
+            zoomed: false,
         });
         self.activate_tab(self.tabs.len() - 1, window, cx);
     }
@@ -540,6 +564,8 @@ impl Workspace {
                 self.attention.remove(&pane.entity_id());
                 self.last_notified.remove(&pane.entity_id());
                 if &tab.active == pane {
+                    // The zoomed pane is gone: show the others again.
+                    tab.zoomed = false;
                     tab.active = successor.unwrap_or_else(|| tab.panes.panes()[0].clone());
                 }
                 if index == self.active_tab {
@@ -576,6 +602,8 @@ impl Workspace {
         let tab = &mut self.tabs[self.active_tab];
         let target = tab.active.clone();
         tab.panes.split(&target, axis, pane.clone());
+        // The new pane must be visible.
+        tab.zoomed = false;
         tab.active = pane;
         self.focus_active_pane(window, cx);
     }
@@ -605,9 +633,29 @@ impl Workspace {
             return;
         };
         if let Some(next) = tab.panes.neighbor(&tab.active, direction) {
+            // Like tmux: moving to another pane leaves the zoom.
+            tab.zoomed = false;
             tab.active = next;
             self.focus_active_pane(window, cx);
         }
+    }
+
+    /// Shows the active pane alone, filling the tab, or the splits again.
+    /// Nothing happens in a tab with a single pane.
+    fn toggle_pane_zoom(
+        &mut self,
+        _: &TogglePaneZoom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self.tabs.get_mut(self.active_tab) else {
+            return;
+        };
+        if !tab.has_splits() {
+            return;
+        }
+        tab.zoomed = !tab.zoomed;
+        self.focus_active_pane(window, cx);
     }
 
     // --- Divider dragging -------------------------------------------------------
