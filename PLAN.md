@@ -160,7 +160,7 @@ max_memory_mb = 256
 Each milestone ends with a runnable build.
 
 **M0 — Skeleton** *(foundation)* — **done**
-- Cargo workspace, CI (fmt, clippy, test on Windows, macOS, Linux), `tracing`.
+- Cargo workspace, CI (fmt, clippy, test on Windows, macOS, Linux), `tracing`. Since 2026-11-13 CI runs by hand only (`workflow_dispatch`, owner's choice: Actions minutes); releases still run on `v*` tags.
 - gpui window that opens, closes, and draws a colored background.
 
 **M1 — Single working terminal** *(the critical path)* — **done** (htop in WSL and `git log` still to be checked by hand)
