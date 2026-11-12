@@ -1,0 +1,16 @@
+[package]
+name = "lohtty-usage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Usage limits of coding agents (Claude, Codex): session and weekly windows,
+# read from the agents' own files or APIs. No gpui dependency.
+
+[dependencies]
+dirs.workspace = true
+serde_json = "1"
+tracing.workspace = true
+
+[lints]
+workspace = true

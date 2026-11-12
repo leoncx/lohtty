@@ -39,7 +39,8 @@ lohtty/
 │   ├── lohtty-theme/          # Theme struct, TOML loader; themes/*.toml bundled (Tokyo Night + storm, moon, day)
 │   ├── lohtty-term/           # Terminal session: PTY, alacritty Term, events, search
 │   ├── lohtty-graphics/       # OPTIONAL (feature `kitty-graphics`): parser, image store, placements
-│   └── lohtty-ui/             # gpui views: Workspace, TabBar, PaneGroup, TerminalView, SearchBar
+│   ├── lohtty-ui/             # gpui views: Workspace, TabBar, PaneGroup, TerminalView, SearchBar
+│   └── lohtty-usage/          # coding agents' usage limits (Claude, Codex); no gpui
 └── tests/                     # vttest-style integration / snapshot tests
 ```
 
@@ -70,6 +71,10 @@ lohtty/
 - Supports the actions `a=t,T,p,d,q`, formats `f=24,32,100` (PNG through the `image` crate), transmission `t=d` (direct) first, then `t=f,t` (file, temp file), and chunking (`m=1`).
 - `ImageStore` (id → decoded RGBA, with a memory cap) and `Placement` anchored to an absolute grid line so placements scroll with text.
 - Responses (`OK` / errors) go back to the PTY. After a placement, the filter injects the cursor movement that the spec requires.
+
+**`lohtty-usage`** (no gpui dependency)
+- `UsageSnapshot { provider, plan, windows: Vec<UsageWindow>, observed_at }`; a `UsageWindow` is a session (5 h), weekly or other window with its percent used and reset time.
+- One module per provider turns the agent's data into snapshots; `humanize_remaining` / `humanize_ago` and `Level` (70 % / 90 % thresholds) serve the title-bar meter.
 
 **`lohtty-ui`**
 - `Workspace` (root view): owns the `TabBar` and `Vec<Tab>`.
@@ -314,6 +319,9 @@ Each milestone ends with a runnable build.
   - **OSC 9;4 progress** (ConEmu / Windows Terminal: state 0 none, 1 normal with a value, 2 error, 3 indeterminate, 4 paused) is mapped to the root record as the spec allows: working with the value (paused too, so it doesn't raise alerts), working without a value, error, or removed. Once a pane has sent any OSC 7501 report, OSC 9;4 is ignored until RIS. Live with PowerShell 7.6's `Write-Progress` (`$PSStyle.Progress.UseOSCIndicator = $true`): the tab showed the spinner and 48%; `9;4;2` showed ✕ plus the attention dot; `9;4;0` removed it.
   - **Taskbar** (Windows, `notifier::taskbar_progress`): the button shows the most urgent status of all tabs (so a background agent shows while minimized): working → progress bar or marquee, blocked → paused (yellow), error → red, otherwise none. `ITaskbarList3` is created once on the UI thread (`CoCreateInstance`, after `CoInitializeEx` STA) and called through a hand-declared vtable (slots 3, 9, 10); the last value per window is cached, so the call from `render` only reaches COM on changes. Seen live: partial bar during `Write-Progress`, red on error, normal after.
   - **Not done:** records aren't dropped when the program exits without a prompt starting (lohtty can't tell the agent from the shell).
+- **Usage meter** (in progress, branch `feature/usage-meter`): a donut per coding agent on the right of the title bar, outer ring the 5-hour session, inner ring the week, with a tooltip giving each window's use and the time left until it resets.
+  - **Step 1 — done:** crate `lohtty-usage`: the model, humanized durations, levels, an RFC 3339 parser (no date crate), and the Codex reader (`codex`): the last `token_count` event's `rate_limits` (`primary` = session, `secondary` = week; `resets_at` in Unix seconds, or the older `resets_in_seconds` from the event's timestamp; event under `payload` or the older `msg`) from the most recently *modified* `$CODEX_HOME/sessions/**/rollout-*.jsonl` (resumed sessions append to their old log), trying the 5 newest. Tested with fixtures only: Codex isn't installed on the dev machine, so the field names come from Codex's source as remembered and must be checked against a real log.
+  - **Next:** step 2, the Claude provider (`GET api.anthropic.com/api/oauth/usage` with Claude Code's OAuth token, read-only, undocumented endpoint) and the background poller; step 3, the donut and rich tooltip; step 4, `[usage]` config and the settings toggle; step 5, live checks.
 - **Shift+Enter / kitty keyboard protocol** (for coding agents and others):
   - **Unix:** alacritty_terminal implements the protocol's mode stack and its `CSI ? u` reply only with `Config::kitty_keyboard`, now on. The encoder (`input::kitty_key`) implements the "disambiguate escape codes" level (flag 1, what agents request): Escape → `CSI 27 u`; Enter, Tab, Backspace with modifiers → `CSI 13/9/127 ; mods u`; Ctrl/Alt with a character key → `CSI codepoint ; mods u` (the unshifted key, lower case); AltGr text stays text; other keys keep their legacy forms, which carry modifiers. Higher flags (event types, alternate keys, all keys as escapes, text) are accepted and reported but not acted on. Live on Linux: a raw-mode program pushing flag 1 got `CSI ? 1 u` for its query, `\r` for Enter, `CSI 13;2u` for Shift+Enter, `CSI 13;5u` for Ctrl+Enter, `CSI 27u` for Escape.
   - **Windows:** ConPTY asks for win32 input mode (`CSI ? 9001 h`) at startup, and passes the kitty requests through. `modes::ModeWatcher` tracks 9001 in the output. Input policy: a program that pushed kitty flags gets kitty encoding (ConPTY passes `CSI u` input through to VT readers); otherwise, under 9001, modified Enter is sent as win32 key-down/key-up records (`CSI 13;sc;13|10;1|0;state;1 _`, scan code from `MapVirtualKeyW`), so programs that read console key records (crossterm, so Codex) see the Shift. Everything else keeps VT input, which ConPTY accepts alongside.

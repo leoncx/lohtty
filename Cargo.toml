@@ -13,6 +13,7 @@ lohtty-config = { path = "crates/lohtty-config" }
 lohtty-theme = { path = "crates/lohtty-theme" }
 lohtty-term = { path = "crates/lohtty-term" }
 lohtty-ui = { path = "crates/lohtty-ui" }
+lohtty-usage = { path = "crates/lohtty-usage" }
 
 # Pinned exactly: gpui is pre-1.0 and breaks between releases.
 gpui = "=0.2.2"
