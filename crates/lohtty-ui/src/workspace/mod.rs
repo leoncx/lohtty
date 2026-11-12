@@ -167,6 +167,9 @@ pub struct Workspace {
     /// `[usage]` settings change).
     usage_tx: async_channel::Sender<Update>,
     _usage_updates: Task<()>,
+    /// Redraws the meter when the next limit window resets, so its ring
+    /// drops to 0 without waiting for a poll.
+    usage_reset_redraw: Option<Task<()>>,
     _watcher: Option<ConfigWatcher>,
     _reload: Task<()>,
     _notification_clicks: Task<()>,
@@ -235,6 +238,7 @@ impl Workspace {
                     if usage_enabled(&this.config.usage, update.provider)
                         && this.usage.apply(update)
                     {
+                        this.schedule_usage_redraw(cx);
                         cx.notify();
                     }
                 });
@@ -263,6 +267,7 @@ impl Workspace {
             usage_poller,
             usage_tx,
             _usage_updates: usage_updates,
+            usage_reset_redraw: None,
             _watcher: watcher,
             _reload: reload,
             _notification_clicks: notification_clicks,
@@ -695,6 +700,7 @@ impl Workspace {
             self.usage_poller = spawn_usage_poller(&config.usage, &self.usage_tx);
             self.usage
                 .retain(|provider| usage_enabled(&config.usage, provider));
+            self.schedule_usage_redraw(cx);
         }
         window.set_background_appearance(window_background(&config.window));
         for pane in self.tabs.iter().flat_map(|t| t.panes.panes()) {
@@ -704,6 +710,24 @@ impl Workspace {
         self.theme = theme;
         self.error = None;
         cx.notify();
+    }
+}
+
+impl Workspace {
+    /// Sets a timer for the meter's next reset, replacing any earlier one.
+    fn schedule_usage_redraw(&mut self, cx: &mut Context<Self>) {
+        let now = std::time::SystemTime::now();
+        self.usage_reset_redraw = self.usage.next_reset(now).map(|at| {
+            // A second late, so the window has reset when it redraws.
+            let wait = at.duration_since(now).unwrap_or_default() + Duration::from_secs(1);
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(wait).await;
+                let _ = this.update(cx, |this, cx| {
+                    this.schedule_usage_redraw(cx);
+                    cx.notify();
+                });
+            })
+        });
     }
 }
 

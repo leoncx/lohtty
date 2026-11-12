@@ -83,6 +83,17 @@ impl UsageBoard {
         self.entries.retain(|(p, _)| keep(*p));
     }
 
+    /// The soonest reset time still to come, across all shown windows.
+    pub fn next_reset(&self, now: SystemTime) -> Option<SystemTime> {
+        self.entries
+            .iter()
+            .filter_map(|(_, e)| e.snapshot.as_ref())
+            .flat_map(|s| &s.windows)
+            .filter_map(|w| w.resets_at)
+            .filter(|at| *at > now)
+            .min()
+    }
+
     pub fn entries(&self) -> &[(Provider, Entry)] {
         &self.entries
     }
@@ -439,6 +450,23 @@ mod tests {
 
         board.retain(|p| p != Provider::Codex);
         assert!(board.entries().is_empty());
+    }
+
+    #[test]
+    fn next_reset_is_the_soonest_to_come() {
+        let mut board = UsageBoard::default();
+        assert_eq!(board.next_reset(at(0)), None);
+        // Session resets at 1000; the week's reset is unknown.
+        board.apply(update(
+            Provider::Codex,
+            ProviderState::Ready(snapshot(Provider::Codex, 10.0)),
+        ));
+        let mut claude = snapshot(Provider::Claude, 10.0);
+        claude.windows[0].resets_at = Some(at(500));
+        board.apply(update(Provider::Claude, ProviderState::Ready(claude)));
+        assert_eq!(board.next_reset(at(0)), Some(at(500)));
+        assert_eq!(board.next_reset(at(500)), Some(at(1000)));
+        assert_eq!(board.next_reset(at(1000)), None);
     }
 
     #[test]
