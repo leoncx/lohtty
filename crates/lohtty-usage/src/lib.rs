@@ -2,16 +2,41 @@
 //! of the week is used, and when each resets.
 //!
 //! Each provider module turns its agent's data into a [`UsageSnapshot`]:
+//! - [`claude`] asks the usage endpoint behind Claude Code's `/usage`;
 //! - [`codex`] reads the rate limits Codex writes to its session logs.
 //!
-//! Nothing here touches the network or gpui, so it is all unit tested.
+//! [`Poller`] runs them on a background thread. No gpui here.
 
+pub mod claude;
 pub mod codex;
+mod poller;
 mod time;
 
 use std::time::{Duration, SystemTime};
 
+pub use poller::{Poller, PollerOptions, ProviderState, Update};
 pub use time::parse_rfc3339;
+
+/// Why a provider's usage couldn't be read. Messages are for the tooltip.
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+pub enum UsageError {
+    #[error("can't read the credentials: {0}")]
+    Credentials(String),
+    #[error("the sign-in has expired; run Claude Code to renew it")]
+    Expired,
+    #[error("the sign-in was refused; sign in again in Claude Code")]
+    Unauthorized,
+    #[error("too many requests; waiting before asking again")]
+    RateLimited { retry_after: Option<Duration> },
+    #[error("network error: {0}")]
+    Network(String),
+    #[error("the server answered {0}")]
+    Status(u16),
+    #[error("unexpected answer: {0}")]
+    Parse(String),
+    #[error("can't read the logs: {0}")]
+    Io(String),
+}
 
 /// The agent a snapshot is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
