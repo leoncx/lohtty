@@ -21,8 +21,8 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
   failed), through the Program Status Protocol (OSC 7501)
 - Claude and Codex usage limits on the title bar: the session and the week
   as a donut, with the time left until each resets
-- Attention alerts for coding agents and other programs: a tab mark, and on
-  Windows a taskbar flash and desktop notification when lohtty isn't in front
+- Attention alerts for coding agents and other programs: a tab mark, and a
+  desktop notification when lohtty isn't in front (Windows and macOS)
 - Images through the kitty graphics protocol (PNG, RGB/RGBA; direct, file and
   temporary-file transfer)
 - PowerShell by default, any shell configurable
@@ -139,7 +139,7 @@ height = 650
 kitty = true               # kitty graphics protocol (new tabs and panes)
 
 [notifications]
-desktop = true             # desktop notifications when lohtty isn't in front (Windows)
+desktop = true             # desktop notifications when lohtty isn't in front (Windows, macOS)
 
 [usage]
 claude = true              # Claude's limits on the title bar (needs Claude Code signed in)
@@ -169,11 +169,16 @@ ansi = [
 When a program rings the bell or asks for a notification (OSC 9, OSC 777 or
 OSC 99), lohtty lets you know, unless you're already looking at that pane:
 
-- The tab gets a yellow dot until you visit the pane.
-- If lohtty isn't in front (Windows), its taskbar button flashes and a desktop
-  notification shows the message. Clicking it brings you to that tab and pane.
-  Each pane shows at most one notification every 5 seconds. Turn them off
-  with `notifications.desktop = false`.
+- The tab gets a yellow dot until you visit the pane. On macOS, the Dock icon
+  also shows how many panes are waiting.
+- If lohtty isn't in front, its taskbar button flashes (Windows) or its Dock
+  icon bounces (macOS), and a desktop notification shows the message.
+  Clicking it brings you to that tab and pane. Each pane shows at most one
+  notification every 5 seconds. Turn them off with
+  `notifications.desktop = false`. On macOS, the first one asks whether
+  lohtty may send notifications (*System Settings → Notifications* changes
+  the answer), and only the app (`lohtty.app`) can send them, not a bare
+  `cargo run` build.
 
 Coding agents use this to say they finished or wait for you, but most only
 send it to terminals they recognize. To turn it on:

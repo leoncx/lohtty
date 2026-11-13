@@ -693,6 +693,7 @@ impl Workspace {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         notifier::taskbar_progress(window, self.taskbar_progress(cx));
+        notifier::dock_badge(self.attention.len());
         let theme = &self.theme;
         let body = match self.tabs.get(self.active_tab) {
             Some(tab) if tab.is_zoomed() => self.render_node(&Node::Leaf(tab.active.clone()), cx),

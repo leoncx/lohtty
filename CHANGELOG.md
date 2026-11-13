@@ -20,6 +20,9 @@ version and changelog section, and uses that section as the release notes.
   or OSC 9;9, see the README).
 - An About section at the bottom of Settings: version, release date and
   commit.
+- macOS: desktop notifications when a program in a pane asks for attention
+  (Claude Code, Codex, ...) and lohtty isn't in front. Clicking one brings you
+  to that pane; the Dock icon bounces and shows how many panes are waiting.
 
 ### Changed
 

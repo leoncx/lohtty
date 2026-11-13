@@ -1,8 +1,12 @@
 //! Getting the user's attention when lohtty isn't in front: flashing the
-//! taskbar button and showing a desktop notification. Windows only for now;
-//! elsewhere both do nothing.
+//! taskbar button (Windows) or bouncing the Dock icon (macOS), and showing a
+//! desktop notification. Linux has neither yet.
 //!
-//! Notifications are notification-area balloons, which Windows 10 and 11
+//! On macOS, notifications go through Notification Center
+//! (UserNotifications), which needs the app bundle: a bare binary (such as
+//! `cargo run`) has none, and gets no notifications.
+//!
+//! On Windows, notifications are notification-area balloons, which Windows 10 and 11
 //! show as toasts. Unlike WinRT toasts, they need no registered app id, so
 //! they also work for the portable build. A hidden message-only window
 //! receives the balloon's events; it lives on the UI thread, whose message
@@ -14,6 +18,8 @@ use gpui::Window;
 pub struct Notifier {
     #[cfg(windows)]
     inner: Option<windows::Tray>,
+    #[cfg(target_os = "macos")]
+    inner: Option<macos::Center>,
 }
 
 impl Notifier {
@@ -27,7 +33,14 @@ impl Notifier {
                 .ok();
             (Self { inner }, rx)
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            let inner = macos::Center::new(tx)
+                .inspect_err(|e| tracing::warn!("desktop notifications disabled: {e}"))
+                .ok();
+            (Self { inner }, rx)
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         {
             drop(tx);
             (Self {}, rx)
@@ -41,7 +54,11 @@ impl Notifier {
         if let Some(tray) = &self.inner {
             tray.show(title, body, token);
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        if let Some(center) = &self.inner {
+            center.show(title, body, token);
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         let _ = (title, body, token);
     }
 }
@@ -69,12 +86,185 @@ pub fn taskbar_progress(window: &Window, progress: TaskbarProgress) {
     let _ = (window, progress);
 }
 
-/// Flashes the window's taskbar button until the window is activated.
+/// Shows on the Dock icon how many panes wait for the user (macOS), as
+/// a badge; none at zero. Repeated calls with the same count do nothing.
+pub fn dock_badge(count: usize) {
+    #[cfg(target_os = "macos")]
+    macos::badge(count);
+    #[cfg(not(target_os = "macos"))]
+    let _ = count;
+}
+
+/// Flashes the window's taskbar button until the window is activated
+/// (Windows), or bounces the Dock icon once (macOS).
 pub fn flash(window: &Window) {
     #[cfg(windows)]
     windows::flash(window);
+    #[cfg(target_os = "macos")]
+    macos::bounce();
     #[cfg(not(windows))]
     let _ = window;
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use block2::{DynBlock, RcBlock};
+    use objc2::rc::Retained;
+    use objc2::runtime::{Bool, NSObject, NSObjectProtocol, ProtocolObject};
+    use objc2::{AllocAnyThread, DefinedClass, MainThreadMarker, define_class, msg_send};
+    use std::cell::Cell;
+
+    use objc2_app_kit::{NSApplication, NSRequestUserAttentionType};
+    use objc2_foundation::{NSBundle, NSError, NSString};
+    use objc2_user_notifications::{
+        UNAuthorizationOptions, UNMutableNotificationContent, UNNotification,
+        UNNotificationPresentationOptions, UNNotificationRequest, UNNotificationResponse,
+        UNNotificationSound, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+    };
+
+    pub struct Ivars {
+        clicks: async_channel::Sender<u64>,
+    }
+
+    define_class!(
+        /// Receives Notification Center's events: shows notifications even
+        /// while lohtty is in front, and reports clicked ones.
+        #[unsafe(super(NSObject))]
+        #[name = "LohttyNotificationDelegate"]
+        #[ivars = Ivars]
+        struct Delegate;
+
+        unsafe impl NSObjectProtocol for Delegate {}
+
+        unsafe impl UNUserNotificationCenterDelegate for Delegate {
+            #[unsafe(method(userNotificationCenter:willPresentNotification:withCompletionHandler:))]
+            fn will_present(
+                &self,
+                _center: &UNUserNotificationCenter,
+                _notification: &UNNotification,
+                handler: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
+            ) {
+                handler.call((UNNotificationPresentationOptions::Banner
+                    | UNNotificationPresentationOptions::Sound,));
+            }
+
+            #[unsafe(method(userNotificationCenter:didReceiveNotificationResponse:withCompletionHandler:))]
+            fn did_receive(
+                &self,
+                _center: &UNUserNotificationCenter,
+                response: &UNNotificationResponse,
+                handler: &DynBlock<dyn Fn()>,
+            ) {
+                // The request's identifier is the token.
+                let id = response.notification().request().identifier().to_string();
+                if let Ok(token) = id.parse() {
+                    let _ = self.ivars().clicks.try_send(token);
+                }
+                handler.call(());
+            }
+        }
+    );
+
+    impl Delegate {
+        fn new(clicks: async_channel::Sender<u64>) -> Retained<Self> {
+            let this = Self::alloc().set_ivars(Ivars { clicks });
+            unsafe { msg_send![super(this), init] }
+        }
+    }
+
+    pub struct Center {
+        center: Retained<UNUserNotificationCenter>,
+        // The center holds its delegate weakly.
+        _delegate: Retained<Delegate>,
+    }
+
+    impl Center {
+        pub fn new(clicks: async_channel::Sender<u64>) -> Result<Self, String> {
+            // UserNotifications throws without a bundle identifier.
+            if NSBundle::mainBundle().bundleIdentifier().is_none() {
+                return Err("not running from the app bundle".into());
+            }
+            let center = UNUserNotificationCenter::currentNotificationCenter();
+            let delegate = Delegate::new(clicks);
+            center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+            // Asked at startup, so the prompt shows while the user is here
+            // and lohtty is listed in System Settings → Notifications.
+            let answer = RcBlock::new(|granted: Bool, error: *mut NSError| match describe(error) {
+                Some(e) => tracing::warn!("desktop notifications refused: {e}"),
+                None => tracing::info!(allowed = granted.as_bool(), "desktop notifications"),
+            });
+            center.requestAuthorizationWithOptions_completionHandler(OPTIONS, &answer);
+            Ok(Self {
+                center,
+                _delegate: delegate,
+            })
+        }
+
+        /// Shows a notification, replacing the previous one with the same
+        /// token (pane).
+        pub fn show(&self, title: &str, body: &str, token: u64) {
+            let content = UNMutableNotificationContent::new();
+            content.setTitle(&NSString::from_str(title));
+            content.setBody(&NSString::from_str(body));
+            content.setSound(Some(&UNNotificationSound::defaultSound()));
+            let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+                &NSString::from_str(&token.to_string()),
+                &content,
+                None,
+            );
+            // Asking again only reads the user's answer, which may have
+            // changed in System Settings since startup.
+            let center = self.center.clone();
+            let post = RcBlock::new(move |granted: Bool, _error: *mut NSError| {
+                if !granted.as_bool() {
+                    tracing::debug!("desktop notifications not allowed");
+                    return;
+                }
+                let done = RcBlock::new(|error: *mut NSError| {
+                    if let Some(e) = describe(error) {
+                        tracing::warn!("desktop notification failed: {e}");
+                    }
+                });
+                center.addNotificationRequest_withCompletionHandler(&request, Some(&done));
+            });
+            self.center
+                .requestAuthorizationWithOptions_completionHandler(OPTIONS, &post);
+        }
+    }
+
+    const OPTIONS: UNAuthorizationOptions = UNAuthorizationOptions::Alert
+        .union(UNAuthorizationOptions::Sound)
+        .union(UNAuthorizationOptions::Badge);
+
+    /// The message of an error a completion handler received, if any.
+    fn describe(error: *mut NSError) -> Option<String> {
+        // SAFETY: the handler's error is null or a valid NSError for the call.
+        unsafe { error.as_ref() }.map(|e| e.localizedDescription().to_string())
+    }
+
+    pub fn badge(count: usize) {
+        thread_local! {
+            static SHOWN: Cell<usize> = const { Cell::new(0) };
+        }
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        if SHOWN.replace(count) == count {
+            return;
+        }
+        let label = (count > 0).then(|| NSString::from_str(&count.to_string()));
+        NSApplication::sharedApplication(mtm)
+            .dockTile()
+            .setBadgeLabel(label.as_deref());
+    }
+
+    /// Bounces the Dock icon once.
+    pub fn bounce() {
+        if let Some(mtm) = MainThreadMarker::new() {
+            NSApplication::sharedApplication(mtm)
+                .requestUserAttention(NSRequestUserAttentionType::InformationalRequest);
+        }
+    }
 }
 
 #[cfg(windows)]
