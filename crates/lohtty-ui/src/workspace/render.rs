@@ -3,9 +3,10 @@
 use std::sync::OnceLock;
 
 use gpui::{
-    AnyElement, Context, CursorStyle, ElementId, IntoElement, MouseButton, MouseMoveEvent, Render,
-    Rgba, SharedString, Window, WindowControlArea, canvas, div, prelude::*, px, relative, rgb,
-    rgba,
+    AnyElement, Bounds, BoxShadow, Context, CursorStyle, Decorations, ElementId, HitboxBehavior,
+    IntoElement, MouseButton, MouseMoveEvent, PathBuilder, Pixels, Point, Render, ResizeEdge, Rgba,
+    SharedString, Size, Tiling, Window, WindowControlArea, canvas, div, hsla, point, prelude::*,
+    px, relative, rgb, rgba,
 };
 
 use super::*;
@@ -13,7 +14,7 @@ use crate::colors::{mix, to_rgba};
 use crate::pane_tree::Node;
 use crate::tooltip::Tooltip;
 use crate::usage_meter::{self, Palette, UsageTooltip};
-use crate::{CAPTION_BUTTONS, CUSTOM_TITLEBAR};
+use crate::{caption_buttons, custom_titlebar};
 
 /// Width of the divider hit area between panes, in pixels.
 const DIVIDER: f32 = 5.0;
@@ -28,6 +29,103 @@ const NEW_TAB_WIDTH: f32 = 36.0;
 const DRAG_GAP: f32 = 32.0;
 /// Room left for the macOS traffic lights at the start of the tab bar.
 const TRAFFIC_LIGHTS_WIDTH: f32 = 78.0;
+/// Linux, client-side decorations: the shadow around the window, which is
+/// also where it is resized from.
+const CSD_INSET: f32 = 10.0;
+
+/// The window's tiling, when lohtty draws its frame (Linux, client-side
+/// decorations); `None` when the platform does.
+fn csd_tiling(window: &Window) -> Option<Tiling> {
+    match window.window_decorations() {
+        Decorations::Client { tiling } if cfg!(target_os = "linux") => Some(tiling),
+        _ => None,
+    }
+}
+
+/// The window edge or corner under `pos`, within the shadow around it.
+fn resize_edge(pos: Point<Pixels>, size: Size<Pixels>, tiling: Tiling) -> Option<ResizeEdge> {
+    let inset = px(CSD_INSET);
+    let top = !tiling.top && pos.y < inset;
+    let bottom = !tiling.bottom && pos.y > size.height - inset;
+    // Corners take a little more room, so they are easier to grab.
+    let corner = px(CSD_INSET * 2.0);
+    let left = !tiling.left && pos.x < if top || bottom { corner } else { inset };
+    let right = !tiling.right && pos.x > size.width - if top || bottom { corner } else { inset };
+    Some(match (top, bottom, left, right) {
+        (true, _, true, _) => ResizeEdge::TopLeft,
+        (true, _, _, true) => ResizeEdge::TopRight,
+        (_, true, true, _) => ResizeEdge::BottomLeft,
+        (_, true, _, true) => ResizeEdge::BottomRight,
+        (true, ..) => ResizeEdge::Top,
+        (_, true, ..) => ResizeEdge::Bottom,
+        (_, _, true, _) => ResizeEdge::Left,
+        (_, _, _, true) => ResizeEdge::Right,
+        _ => return None,
+    })
+}
+
+fn resize_cursor(edge: ResizeEdge) -> CursorStyle {
+    match edge {
+        ResizeEdge::Top | ResizeEdge::Bottom => CursorStyle::ResizeUpDown,
+        ResizeEdge::Left | ResizeEdge::Right => CursorStyle::ResizeLeftRight,
+        ResizeEdge::TopLeft | ResizeEdge::BottomRight => CursorStyle::ResizeUpLeftDownRight,
+        ResizeEdge::TopRight | ResizeEdge::BottomLeft => CursorStyle::ResizeUpRightDownLeft,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Caption {
+    Minimize,
+    Maximize,
+    Restore,
+    Close,
+}
+
+/// A 10×10 caption button icon, stroked like Windows 11's (Linux has no
+/// icon font for them).
+fn caption_icon(kind: Caption, color: Rgba) -> impl IntoElement {
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let o = bounds.origin;
+            let p = |x: f32, y: f32| point(o.x + px(x), o.y + px(y));
+            let mut path = PathBuilder::stroke(px(1.0));
+            let rect = |path: &mut PathBuilder, l: f32, t: f32, r: f32, b: f32| {
+                path.move_to(p(l, t));
+                path.line_to(p(r, t));
+                path.line_to(p(r, b));
+                path.line_to(p(l, b));
+                path.close();
+            };
+            match kind {
+                Caption::Minimize => {
+                    path.move_to(p(0.0, 5.5));
+                    path.line_to(p(10.0, 5.5));
+                }
+                Caption::Maximize => rect(&mut path, 0.5, 0.5, 9.5, 9.5),
+                Caption::Restore => {
+                    rect(&mut path, 0.5, 2.5, 7.5, 9.5);
+                    path.move_to(p(2.5, 2.5));
+                    path.line_to(p(2.5, 0.5));
+                    path.line_to(p(9.5, 0.5));
+                    path.line_to(p(9.5, 7.5));
+                    path.line_to(p(7.5, 7.5));
+                }
+                Caption::Close => {
+                    path.move_to(p(0.5, 0.5));
+                    path.line_to(p(9.5, 9.5));
+                    path.move_to(p(9.5, 0.5));
+                    path.line_to(p(0.5, 9.5));
+                }
+            }
+            if let Ok(path) = path.build() {
+                window.paint_path(path, color);
+            }
+        },
+    )
+    .flex_none()
+    .size(px(10.0))
+}
 
 /// A 14×12 pane outline divided in two: side by side for [`Axis::Horizontal`]
 /// (split right), stacked for [`Axis::Vertical`] (split down).
@@ -120,7 +218,9 @@ impl Workspace {
         let fg = to_rgba(t.foreground);
         let muted = to_rgba(mix(t.foreground, t.background, 0.45));
         let accent = to_rgba(t.ansi[4]);
-        let single = CUSTOM_TITLEBAR && self.tabs.len() == 1;
+        let custom = custom_titlebar(window);
+        let captions = caption_buttons(window);
+        let single = custom && self.tabs.len() == 1;
         // The traffic lights are hidden in full screen.
         let lights = if cfg!(target_os = "macos") && !window.is_fullscreen() {
             TRAFFIC_LIGHTS_WIDTH
@@ -233,9 +333,11 @@ impl Workspace {
         // between the buttons on either side; otherwise it is centered in the
         // space between them. 40 px leave room for its status and dot.
         let (title_left, title_right, title_max_width) = {
-            let bar = f32::from(window.viewport_size().width);
+            let bar = f32::from(window.viewport_size().width)
+                - csd_tiling(window)
+                    .map_or(0.0, |t| CSD_INSET * (!t.left as u8 + !t.right as u8) as f32);
             let left = lights + NEW_TAB_WIDTH + 8.0;
-            let right = if CAPTION_BUTTONS {
+            let right = if captions {
                 3.0 * CAPTION_BUTTON_WIDTH
             } else {
                 0.0
@@ -270,7 +372,7 @@ impl Workspace {
                         .max_w(px(title_max_width))
                         .truncate()
                         .text_color(fg)
-                        .window_control_area(WindowControlArea::Drag)
+                        .map(|el| self.drag_area(el, cx))
                         .child(title),
                 )
         });
@@ -297,23 +399,24 @@ impl Workspace {
                 double_click_zooms(div())
                     .flex()
                     .flex_col()
-                    .map(|el| match (single, CUSTOM_TITLEBAR) {
+                    .map(|el| match (single, custom) {
                         (true, _) => el.flex_1().min_w(px(DRAG_GAP)),
                         (false, true) => el.flex_none().w(px(DRAG_GAP)),
                         (false, false) => el.flex_none(),
                     })
                     .h_full()
-                    .when(CUSTOM_TITLEBAR, |el| {
-                        el.child(div().flex_none().h(px(4.0)))
-                            .child(div().flex_1().window_control_area(WindowControlArea::Drag))
+                    .when(custom, |el| {
+                        // (Linux: the window resizes from its shadow instead.)
+                        el.when(csd_tiling(window).is_none(), |el| {
+                            el.child(div().flex_none().h(px(4.0)))
+                        })
+                        .child(self.drag_area(div().flex_1(), cx))
                     }),
             )
             .child(self.render_usage(cx))
             .child(self.inert_while_settings(self.render_split_buttons(cx)))
             .child(self.render_settings_button(window, cx))
-            .when(CAPTION_BUTTONS, |el| {
-                el.child(self.render_caption_buttons(window))
-            })
+            .when(captions, |el| el.child(self.render_caption_buttons(window)))
     }
 
     /// A tab's program status (OSC 7501): a spinner while working (with the
@@ -559,7 +662,10 @@ impl Workspace {
     /// Minimize / maximize-restore / close, drawn like Windows 11's. The OS
     /// handles the clicks (and the snap-layout flyout on maximize) through
     /// the control areas.
-    fn render_caption_buttons(&self, window: &Window) -> impl IntoElement {
+    fn render_caption_buttons(&self, window: &Window) -> AnyElement {
+        if !cfg!(windows) {
+            return self.render_drawn_caption_buttons(window);
+        }
         let t = &self.theme;
         let hover = to_rgba(mix(t.background, t.foreground, 0.12));
         let fg = if window.is_window_active() {
@@ -603,6 +709,165 @@ impl Workspace {
                 button("caption-close", "\u{E8BB}", WindowControlArea::Close)
                     .hover(|s| s.bg(rgb(0xc42b1c)).text_color(rgb(0xffffff))),
             )
+            .into_any_element()
+    }
+
+    /// Minimize / maximize-restore / close where the platform doesn't handle
+    /// caption buttons (Linux): drawn icons, and the clicks handled here.
+    /// Minimize and maximize show only when the compositor supports them.
+    fn render_drawn_caption_buttons(&self, window: &Window) -> AnyElement {
+        let t = &self.theme;
+        let hover = to_rgba(mix(t.background, t.foreground, 0.12));
+        let fg = if window.is_window_active() {
+            to_rgba(t.foreground)
+        } else {
+            to_rgba(mix(t.foreground, t.background, 0.45))
+        };
+        let controls = window.window_controls();
+        let button = |id: &'static str, kind: Caption| {
+            div()
+                .id(id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .w(px(CAPTION_BUTTON_WIDTH))
+                .h_full()
+                .child(caption_icon(kind, fg))
+        };
+        let maximize = if window.is_maximized() {
+            Caption::Restore
+        } else {
+            Caption::Maximize
+        };
+
+        div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .h_full()
+            .when(controls.minimize, |el| {
+                el.child(
+                    button("caption-min", Caption::Minimize)
+                        .hover(|s| s.bg(hover))
+                        .on_click(|_, window, _| window.minimize_window()),
+                )
+            })
+            .when(controls.maximize, |el| {
+                el.child(
+                    button("caption-max", maximize)
+                        .hover(|s| s.bg(hover))
+                        .on_click(|_, window, _| window.zoom_window()),
+                )
+            })
+            .child(
+                button("caption-close", Caption::Close)
+                    .hover(|s| s.bg(rgb(0xc42b1c)))
+                    .on_click(|_, window, _| window.remove_window()),
+            )
+            .into_any_element()
+    }
+
+    /// Makes `el` part of the title bar's drag area. On Windows the OS handles
+    /// it through the control area; on Linux it's done here: dragging moves
+    /// the window, a double-click maximizes it, a right-click opens the
+    /// window menu. The move starts on the first drag, not the press, so a
+    /// double-click still reaches the window.
+    fn drag_area(&self, el: gpui::Div, cx: &mut Context<Self>) -> gpui::Div {
+        let el = el.window_control_area(WindowControlArea::Drag);
+        if !cfg!(target_os = "linux") {
+            return el;
+        }
+        el.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|this, ev: &gpui::MouseDownEvent, window, _| {
+                this.titlebar_pressed = ev.click_count == 1;
+                if ev.click_count == 2 {
+                    window.zoom_window();
+                }
+            }),
+        )
+        .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, window, _| {
+            if this.titlebar_pressed && ev.pressed_button == Some(MouseButton::Left) {
+                this.titlebar_pressed = false;
+                window.start_window_move();
+            }
+        }))
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(|this, _, _, _| this.titlebar_pressed = false),
+        )
+        .on_mouse_down(MouseButton::Right, |ev, window, _| {
+            window.show_window_menu(ev.position)
+        })
+    }
+
+    /// Linux, client-side decorations: frames `content` with a shadow, which
+    /// resizes the window, and a 1 px border. Tiled (or maximized) edges get
+    /// neither.
+    fn decorate(&self, content: gpui::Div, window: &mut Window) -> AnyElement {
+        let Some(tiling) = csd_tiling(window) else {
+            return content.into_any_element();
+        };
+        window.set_client_inset(px(CSD_INSET));
+        let inset = px(CSD_INSET);
+        let border = to_rgba(mix(self.theme.background, self.theme.foreground, 0.2));
+        div()
+            .id("window-frame")
+            .size_full()
+            .when(!tiling.top, |el| el.pt(inset))
+            .when(!tiling.bottom, |el| el.pb(inset))
+            .when(!tiling.left, |el| el.pl(inset))
+            .when(!tiling.right, |el| el.pr(inset))
+            .child(
+                canvas(
+                    |_, window, _| {
+                        let size = window.window_bounds().get_bounds().size;
+                        window.insert_hitbox(
+                            Bounds::new(point(px(0.0), px(0.0)), size),
+                            HitboxBehavior::Normal,
+                        )
+                    },
+                    move |_, hitbox, window, _| {
+                        let size = window.window_bounds().get_bounds().size;
+                        if let Some(edge) = resize_edge(window.mouse_position(), size, tiling) {
+                            window.set_cursor_style(resize_cursor(edge), &hitbox);
+                        }
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+            .on_mouse_move(move |ev, window, _| {
+                let size = window.window_bounds().get_bounds().size;
+                if resize_edge(ev.position, size, tiling).is_some() {
+                    window.refresh();
+                }
+            })
+            .on_mouse_down(MouseButton::Left, move |ev, window, _| {
+                let size = window.window_bounds().get_bounds().size;
+                if let Some(edge) = resize_edge(ev.position, size, tiling) {
+                    window.start_window_resize(edge);
+                }
+            })
+            .child(
+                content
+                    .cursor(CursorStyle::Arrow)
+                    .when(!tiling.top, |el| el.border_t_1())
+                    .when(!tiling.bottom, |el| el.border_b_1())
+                    .when(!tiling.left, |el| el.border_l_1())
+                    .when(!tiling.right, |el| el.border_r_1())
+                    .border_color(border)
+                    .when(!tiling.is_tiled(), |el| {
+                        el.shadow(vec![BoxShadow {
+                            color: hsla(0.0, 0.0, 0.0, 0.4),
+                            blur_radius: inset / 2.0,
+                            spread_radius: px(0.0),
+                            offset: point(px(0.0), px(0.0)),
+                        }])
+                    }),
+            )
+            .into_any_element()
     }
 
     fn render_node(&self, node: &Node<Pane>, cx: &mut Context<Self>) -> AnyElement {
@@ -704,7 +969,7 @@ impl Render for Workspace {
                 .into_any_element(),
         };
 
-        div()
+        let content = div()
             .key_context(KEY_CONTEXT)
             .size_full()
             .flex()
@@ -804,6 +1069,47 @@ impl Render for Workspace {
                             .occlude()
                             .child(dialog.clone())
                     })),
-            )
+            );
+        self.decorate(content, window)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SIZE: Size<Pixels> = Size {
+        width: px(800.0),
+        height: px(600.0),
+    };
+
+    fn edge(x: f32, y: f32, tiling: Tiling) -> Option<ResizeEdge> {
+        resize_edge(point(px(x), px(y)), SIZE, tiling)
+    }
+
+    #[test]
+    fn shadow_resizes_from_edges_and_corners() {
+        let free = Tiling::default();
+        assert_eq!(edge(400.0, 3.0, free), Some(ResizeEdge::Top));
+        assert_eq!(edge(400.0, 597.0, free), Some(ResizeEdge::Bottom));
+        assert_eq!(edge(3.0, 300.0, free), Some(ResizeEdge::Left));
+        assert_eq!(edge(797.0, 300.0, free), Some(ResizeEdge::Right));
+        assert_eq!(edge(3.0, 3.0, free), Some(ResizeEdge::TopLeft));
+        // Corners reach further along the top and bottom edges.
+        assert_eq!(edge(785.0, 3.0, free), Some(ResizeEdge::TopRight));
+        assert_eq!(edge(15.0, 597.0, free), Some(ResizeEdge::BottomLeft));
+        assert_eq!(edge(797.0, 597.0, free), Some(ResizeEdge::BottomRight));
+        assert_eq!(edge(400.0, 300.0, free), None);
+    }
+
+    #[test]
+    fn tiled_edges_dont_resize() {
+        assert_eq!(edge(3.0, 3.0, Tiling::tiled()), None);
+        let left = Tiling {
+            left: true,
+            ..Tiling::default()
+        };
+        assert_eq!(edge(3.0, 300.0, left), None);
+        assert_eq!(edge(3.0, 3.0, left), Some(ResizeEdge::Top));
     }
 }

@@ -166,6 +166,8 @@ pub struct Workspace {
     /// Where each split was last laid out, for divider dragging.
     split_bounds: Rc<RefCell<HashMap<SplitId, Bounds<Pixels>>>>,
     dragging: Option<DividerDrag>,
+    /// Linux: the title bar was pressed; the window moves on the first drag.
+    titlebar_pressed: bool,
     /// The open settings dialog, if any.
     settings: Option<(Entity<SettingsDialog>, Subscription)>,
     pane_subscriptions: HashMap<EntityId, Subscription>,
@@ -274,6 +276,7 @@ impl Workspace {
             error: None,
             split_bounds: Rc::default(),
             dragging: None,
+            titlebar_pressed: false,
             settings: None,
             pane_subscriptions: HashMap::new(),
             attention: HashSet::new(),

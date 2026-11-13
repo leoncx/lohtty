@@ -2,7 +2,8 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use gpui::{
-    App, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size,
+    App, Application, Bounds, TitlebarOptions, WindowBounds, WindowDecorations, WindowOptions,
+    prelude::*, px, size,
 };
 use lohtty_config::Config;
 use lohtty_theme::Theme;
@@ -47,6 +48,8 @@ fn main() {
                     .then_some(lohtty_ui::TRAFFIC_LIGHT_POSITION),
             }),
             window_background: window_background(win),
+            // Linux: lohtty draws the title bar (tabs, caption buttons).
+            window_decorations: Some(WindowDecorations::Client),
             app_id: Some("lohtty".into()),
             ..Default::default()
         };

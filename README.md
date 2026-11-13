@@ -3,8 +3,9 @@
 A GPU-accelerated, xterm-compatible terminal for Windows (macOS and Linux
 best-effort), written in Rust with [gpui](https://gpui.rs).
 
-- Tabs and split panes, with the tabs in the title bar on Windows and macOS
-  (like Windows Terminal). With a single tab, the title bar shows the window
+- Tabs and split panes, with the tabs in the title bar (like Windows
+  Terminal). On Linux lohtty draws its own title bar, with minimize, maximize
+  and close buttons, unless the compositor imposes its own. With a single tab, the title bar shows the window
   title, centered. New tabs and splits start in the active pane's directory.
 - Search (literal or regex, case toggle, highlighted matches)
 - Themes, Tokyo Night by default, with live config reload
