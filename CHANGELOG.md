@@ -34,6 +34,9 @@ version and changelog section, and uses that section as the release notes.
   deletes the next word.
 - Zooming the window or switching to full screen no longer leaves copies of
   the shell prompt behind: the shell gets the new size once it settles.
+- Text no longer drifts off the cell grid, overlapping colored backgrounds,
+  on a row with a colored underline (SGR 58), a combining mark or an emoji
+  variation selector (such as ⚠️).
 
 ## [0.2.0] - 2026-11-12
 

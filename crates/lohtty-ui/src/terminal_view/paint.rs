@@ -287,6 +287,10 @@ impl FramePainter {
                     pending_spaces = 0;
                     continue;
                 }
+                // Combining marks and variation selectors. A cell's extra
+                // storage also holds its underline color, so an empty list
+                // (`Some([])`) is common and means none.
+                let zerowidth = cell.zerowidth().filter(|zw| !zw.is_empty());
                 let hyperlink = link.is_some();
                 let underlined = flags.intersects(Flags::ALL_UNDERLINES) || hyperlink;
                 let decorated = underlined || flags.contains(Flags::STRIKEOUT);
@@ -297,10 +301,7 @@ impl FramePainter {
                 }
                 // Box-drawing and block characters are drawn as shapes so they
                 // join across cells; decorated or combined ones keep the font.
-                if box_drawing::supported(cell.c)
-                    && width == 1
-                    && !decorated
-                    && cell.zerowidth().is_none()
+                if box_drawing::supported(cell.c) && width == 1 && !decorated && zerowidth.is_none()
                 {
                     segments.extend(seg.take());
                     pending_spaces = 0;
@@ -321,10 +322,12 @@ impl FramePainter {
                     continue;
                 }
 
-                // Wide chars and the cursor cell get their own segment: wide
-                // glyphs must not shift their neighbors, and ligatures are
-                // broken under the cursor so the edited character stays legible.
-                let alone = width == 2 || is_cursor;
+                // Wide chars, combined chars and the cursor cell get their own
+                // segment: wide glyphs must not shift their neighbors, combined
+                // ones are laid out unsnapped (which must not take the rest of
+                // the row off-grid), and ligatures are broken under the cursor
+                // so the edited character stays legible.
+                let alone = width == 2 || zerowidth.is_some() || is_cursor;
                 let contiguous = matches!(&seg, Some(s)
                     if s.row == row && s.col + s.cells + pending_spaces == col);
                 if !contiguous || alone {
@@ -362,7 +365,7 @@ impl FramePainter {
 
                 let start = s.text.len();
                 s.text.push(cell.c);
-                if let Some(zw) = cell.zerowidth() {
+                if let Some(zw) = zerowidth {
                     s.text.extend(zw);
                     // Combining marks add glyphs: per-glyph snapping would misplace them.
                     s.snap = false;
