@@ -11,6 +11,8 @@ version and changelog section, and uses that section as the release notes.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-13
+
 ### Added
 
 - macOS: the tab bar is the title bar, with the traffic lights on its left,
