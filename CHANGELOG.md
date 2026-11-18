@@ -13,31 +13,14 @@ version and changelog section, and uses that section as the release notes.
 
 ### Added
 
-- macOS: the tab bar is the title bar, with the traffic lights on its left,
-  as on Windows. A single tab shows as the window title, centered.
-- New tabs and splits start in the active pane's directory. On macOS and
-  Linux it works with any shell; on Windows the shell must report it (OSC 7
-  or OSC 9;9, see the README).
 - While the shell is at its prompt, the tab and window title show its
   directory (`~` for home) instead of the shell's name; a running program
-  still shows its own title. Windows needs the same directory report as
-  above.
-- An About section at the bottom of Settings: version, release date and
-  commit.
-- Linux: lohtty draws its own title bar, as on Windows: the tabs, with
-  minimize, maximize and close buttons, and a single tab's title centered.
-  It drags the window (double-click maximizes, right-click opens the window
-  menu), and the window resizes from its edges. GNOME on Wayland showed no
-  title bar or buttons at all.
-- macOS: desktop notifications when a program in a pane asks for attention
-  (Claude Code, Codex, ...) and lohtty isn't in front. Clicking one brings you
-  to that pane; the Dock icon bounces and shows how many panes are waiting.
-
+  still shows its own title. Windows needs the shell to report it (OSC 7 or
+  OSC 9;9, see the README).
 - Kitty graphics animations: programs can send an image's frames and let
   lohtty play them (`kitty icat some.gif` animates), or switch frames
   themselves. Frames can be built from earlier ones and composed onto each
   other. An animation runs only while it is on screen.
-
 - Shell integration (OSC 133): a green or red bar beside each prompt whose
   command succeeded or failed, Ctrl+Shift+Up/Down to jump between prompts,
   and Ctrl+Shift+O to select and copy the last command's output (Cmd on
@@ -58,16 +41,39 @@ version and changelog section, and uses that section as the release notes.
   the theme, resizes and the exit code. Saved in Videos/lohtty by default
   (`[recording]` section).
 
-### Changed
-
-- Tabs share the title bar equally (two take half each, three a third).
-
 ### Fixed
 
 - Windows: kitty graphics images (and animations) show again. Recent
   Windows updates make the system's ConPTY drop them, so lohtty now ships
   Microsoft's ConPTY (`conpty.dll` and `OpenConsole.exe`, MIT) next to
   `lohtty.exe`, in the zip and the installer.
+
+## [0.3.0] - 2026-11-13
+
+### Added
+
+- macOS: the tab bar is the title bar, with the traffic lights on its left,
+  as on Windows. A single tab shows as the window title, centered.
+- New tabs and splits start in the active pane's directory. On macOS and
+  Linux it works with any shell; on Windows the shell must report it (OSC 7
+  or OSC 9;9, see the README).
+- An About section at the bottom of Settings: version, release date and
+  commit.
+- Linux: lohtty draws its own title bar, as on Windows: the tabs, with
+  minimize, maximize and close buttons, and a single tab's title centered.
+  It drags the window (double-click maximizes, right-click opens the window
+  menu), and the window resizes from its edges. GNOME on Wayland showed no
+  title bar or buttons at all.
+- macOS: desktop notifications when a program in a pane asks for attention
+  (Claude Code, Codex, ...) and lohtty isn't in front. Clicking one brings you
+  to that pane; the Dock icon bounces and shows how many panes are waiting.
+
+### Changed
+
+- Tabs share the title bar equally (two take half each, three a third).
+
+### Fixed
+
 - macOS: Option+Left/Right move by word in the shell, and Option+Fn+Delete
   deletes the next word.
 - Zooming the window or switching to full screen no longer leaves copies of

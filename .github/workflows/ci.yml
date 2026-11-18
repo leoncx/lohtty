@@ -1,8 +1,10 @@
 name: CI
 
-# Run by hand only (Actions → CI → Run workflow); releases run on tags
-# (release.yml).
+# Runs on pushes to main, or by hand (Actions → CI → Run workflow); releases
+# run on tags (release.yml).
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 env:
