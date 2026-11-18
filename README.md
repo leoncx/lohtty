@@ -167,6 +167,12 @@ desktop = true             # desktop notifications when lohtty isn't in front (W
 claude = true              # Claude's limits on the title bar (needs Claude Code signed in)
 codex = true               # Codex's limits (from its session logs)
 refresh = 120              # seconds between two checks of Claude's usage (60 at least)
+
+[recording]
+# dir = 'D:\casts'         # default: lohtty in your Videos folder
+format = 3                 # asciicast version; 2 for older players
+input = false              # also record what you type (passwords too!)
+# idle_time_limit = 2      # longest pause kept on playback, in seconds
 ```
 
 ### Themes
@@ -235,6 +241,29 @@ PS1='\[\e]133;A\e\\\]'"$PS1"'\[\e]133;B\e\\\]'
 The marks are invisible characters lohtty adds to the first character of
 each prompt and output, so they scroll with the text and go when it is
 cleared; they aren't copied.
+
+## Recording (asciinema)
+
+lohtty records a pane to an [asciinema](https://asciinema.org) file
+(`.cast`), without `asciinema rec`. Open the command palette
+(Ctrl+Shift+P) and choose **Start recording this pane**; the tab shows a
+red dot while it records. Choose **Stop recording this pane** to finish, or
+exit the shell. A message gives the file's path: by default
+`lohtty-<date>-<time>.cast` in a `lohtty` folder in your Videos folder
+(`recording.dir` changes it).
+
+- The recording starts from the screen as it is, so players don't begin on
+  a blank screen.
+- Each shell prompt is a marker, so players can jump command by command,
+  when the shell sends prompt marks (see *Shell integration*).
+- The theme's colors are stored with it; resizes and the shell's exit code
+  are recorded too.
+- What you type isn't recorded unless `recording.input = true`; output
+  still shows what the shell echoes.
+
+Play it with `asciinema play <file>`, or upload it with `asciinema upload`.
+The default format is asciicast v3 (asciinema 3); set `recording.format = 2`
+for older players.
 
 ## Coding agents and attention alerts
 

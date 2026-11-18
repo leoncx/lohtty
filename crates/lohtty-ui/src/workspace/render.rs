@@ -240,6 +240,16 @@ impl Workspace {
                 })
             })
         };
+        // A red dot before the title of a tab with a pane being recorded.
+        let recording_dot = |show: bool| {
+            show.then(|| {
+                div()
+                    .flex_none()
+                    .size(px(8.0))
+                    .rounded_full()
+                    .bg(to_rgba(t.ansi[1]))
+            })
+        };
         // A dot before the title of a tab with a pane waiting for the user.
         let attention_dot = |show: bool| {
             show.then(|| {
@@ -268,6 +278,7 @@ impl Workspace {
                         let active = i == self.active_tab;
                         let title = tab.active.read(cx).title().to_owned();
                         let waiting = self.tab_needs_attention(tab);
+                        let recording = self.tab_recording(tab, cx);
                         let status = self.status_badge(self.tab_status(tab, cx), ("tab-status", i));
                         div()
                             .id(("tab", i))
@@ -296,6 +307,7 @@ impl Workspace {
                                 }),
                             )
                             .children(status)
+                            .children(recording_dot(recording))
                             .children(attention_dot(waiting))
                             .child(div().flex_1().min_w_0().truncate().child(title))
                             .child(
@@ -354,6 +366,7 @@ impl Workspace {
         let centered_title = single.then(|| {
             let title = self.tabs[0].active.read(cx).title().to_owned();
             let waiting = self.tab_needs_attention(&self.tabs[0]);
+            let recording = self.tab_recording(&self.tabs[0], cx);
             let status = self.status_badge(self.tab_status(&self.tabs[0], cx), "title-status");
             div()
                 .absolute()
@@ -366,6 +379,7 @@ impl Workspace {
                 .justify_center()
                 .gap_2()
                 .children(status)
+                .children(recording_dot(recording))
                 .children(attention_dot(waiting))
                 .child(
                     div()
@@ -1069,6 +1083,40 @@ impl Render for Workspace {
                             .bg(rgba(0x0000_0070))
                             .occlude()
                             .child(dialog.clone())
+                    }))
+                    // Messages float over the panes, so they don't resize
+                    // them (a resize would reach the shell, and a recording).
+                    .children(self.notice.as_ref().map(|(text, error)| {
+                        let (bg, fg) = if *error {
+                            (to_rgba(theme.ansi[1]), to_rgba(theme.background))
+                        } else {
+                            (
+                                to_rgba(crate::colors::mix(
+                                    theme.background,
+                                    theme.foreground,
+                                    0.16,
+                                )),
+                                to_rgba(theme.foreground),
+                            )
+                        };
+                        div()
+                            .absolute()
+                            .top(px(8.0))
+                            .left(px(8.0))
+                            .right(px(8.0))
+                            .flex()
+                            .justify_center()
+                            .child(
+                                div()
+                                    .max_w(px(720.0))
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_md()
+                                    .shadow_md()
+                                    .bg(bg)
+                                    .text_color(fg)
+                                    .child(text.clone()),
+                            )
                     }))
                     // The palette sits near the top; a click beside it
                     // closes it.

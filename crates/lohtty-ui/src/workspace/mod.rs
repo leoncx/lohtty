@@ -56,11 +56,13 @@ actions!(
 
 const KEY_CONTEXT: &str = "Workspace";
 const APP_TITLE: &str = "lohtty";
+/// How long a message under the title bar stays.
+const NOTICE_DURATION: Duration = Duration::from_secs(8);
 /// Shortest time between two desktop notifications from the same pane.
 const NOTIFY_INTERVAL: Duration = Duration::from_secs(5);
 
 /// The commands the palette lists, in its order.
-fn palette_commands() -> Vec<(&'static str, Box<dyn gpui::Action>)> {
+fn palette_commands(recording: bool) -> Vec<(&'static str, Box<dyn gpui::Action>)> {
     use crate::terminal_view as t;
     vec![
         ("New tab", Box::new(NewTab)),
@@ -91,6 +93,14 @@ fn palette_commands() -> Vec<(&'static str, Box<dyn gpui::Action>)> {
         ("Larger text", Box::new(t::IncreaseFontSize)),
         ("Smaller text", Box::new(t::DecreaseFontSize)),
         ("Default text size", Box::new(t::ResetFontSize)),
+        (
+            if recording {
+                "Stop recording this pane"
+            } else {
+                "Start recording this pane (asciinema)"
+            },
+            Box::new(t::ToggleRecording),
+        ),
         ("Settings", Box::new(OpenSettings)),
     ]
 }
@@ -217,6 +227,10 @@ pub struct Workspace {
     titlebar_pressed: bool,
     /// The open settings dialog, if any.
     settings: Option<(Entity<SettingsDialog>, Subscription)>,
+    /// A message under the title bar (text, whether it is an error), and
+    /// a counter so an older one's timer doesn't hide a newer one.
+    notice: Option<(String, bool)>,
+    notice_serial: u64,
     /// The open command palette.
     palette: Option<(Entity<CommandPalette>, Subscription)>,
     pane_subscriptions: HashMap<EntityId, Subscription>,
@@ -328,6 +342,8 @@ impl Workspace {
             titlebar_pressed: false,
             settings: None,
             palette: None,
+            notice: None,
+            notice_serial: 0,
             pane_subscriptions: HashMap::new(),
             attention: HashSet::new(),
             last_notified: HashMap::new(),
@@ -402,6 +418,13 @@ impl Workspace {
             TerminalEvent::StatusChanged => {
                 self.run_spinner(window, cx);
                 cx.notify();
+            }
+            TerminalEvent::Recording(result) => {
+                let (text, error) = match result {
+                    Ok(text) => (text, false),
+                    Err(text) => (text, true),
+                };
+                self.show_notice(text.clone(), error, cx);
             }
         }
     }
@@ -540,6 +563,32 @@ impl Workspace {
     }
 
     /// Whether a tab has a pane waiting for the user.
+    /// Whether a pane of this tab is being recorded.
+    fn tab_recording(&self, tab: &Tab, cx: &App) -> bool {
+        tab.panes
+            .panes()
+            .iter()
+            .any(|p| p.read(cx).recording().is_some())
+    }
+
+    /// Shows a message under the title bar for a few seconds.
+    fn show_notice(&mut self, text: String, error: bool, cx: &mut Context<Self>) {
+        self.notice_serial += 1;
+        let serial = self.notice_serial;
+        self.notice = Some((text, error));
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(NOTICE_DURATION).await;
+            let _ = this.update(cx, |this, cx| {
+                if this.notice_serial == serial {
+                    this.notice = None;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn tab_needs_attention(&self, tab: &Tab) -> bool {
         tab.panes
             .panes()
@@ -763,7 +812,8 @@ impl Workspace {
         };
         // Shortcuts as they apply in the active pane.
         let pane = tab.active.focus_handle(cx);
-        let commands = palette_commands()
+        let recording = tab.active.read(cx).recording().is_some();
+        let commands = palette_commands(recording)
             .into_iter()
             .map(|(label, action)| {
                 let shortcut = window

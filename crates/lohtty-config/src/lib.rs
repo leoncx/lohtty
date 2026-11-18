@@ -36,6 +36,7 @@ pub struct Config {
     pub graphics: GraphicsConfig,
     pub notifications: NotificationsConfig,
     pub usage: UsageConfig,
+    pub recording: RecordingConfig,
 }
 
 impl Default for Config {
@@ -50,7 +51,32 @@ impl Default for Config {
             graphics: GraphicsConfig::default(),
             notifications: NotificationsConfig::default(),
             usage: UsageConfig::default(),
+            recording: RecordingConfig::default(),
         }
+    }
+}
+
+/// Recording panes to asciicast files (asciinema), from the command palette.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct RecordingConfig {
+    /// Folder for recordings; by default `lohtty` in the Videos folder.
+    pub dir: Option<PathBuf>,
+    /// asciicast version: 3 (the default), or 2 for older players.
+    pub format: Option<u8>,
+    /// Record what is typed too. Off by default: it would include passwords.
+    pub input: bool,
+    /// Longest pause kept on playback, in seconds; unset keeps every pause.
+    pub idle_time_limit: Option<f64>,
+}
+
+impl RecordingConfig {
+    /// Where recordings go: `dir`, else `<Videos>/lohtty`.
+    pub fn folder(&self) -> Option<PathBuf> {
+        self.dir
+            .clone()
+            .or_else(|| dirs::video_dir().map(|d| d.join("lohtty")))
+            .or_else(|| dirs::home_dir().map(|h| h.join("Videos").join("lohtty")))
     }
 }
 
@@ -255,6 +281,27 @@ mod tests {
     #[test]
     fn empty_file_gives_defaults() {
         assert_eq!(Config::parse("", "x".into()).unwrap(), Config::default());
+    }
+
+    #[test]
+    fn recording_section() {
+        let cfg = Config::parse(
+            "[recording]
+dir = \"D:/casts\"
+format = 2
+input = true
+idle_time_limit = 1.5
+",
+            "x".into(),
+        )
+        .unwrap();
+        assert_eq!(cfg.recording.folder(), Some(PathBuf::from("D:/casts")));
+        assert_eq!(cfg.recording.format, Some(2));
+        assert!(cfg.recording.input);
+        assert_eq!(cfg.recording.idle_time_limit, Some(1.5));
+        let default = RecordingConfig::default();
+        assert!(!default.input);
+        assert!(default.folder().is_some_and(|d| d.ends_with("lohtty")));
     }
 
     #[test]

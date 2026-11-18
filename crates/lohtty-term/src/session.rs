@@ -1,5 +1,5 @@
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -17,6 +17,7 @@ use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_s
 
 use crate::modes::ModeWatcher;
 use crate::notify::{Notification, OscEvent, OscScanner};
+use crate::record::{Options as RecordOptions, Recorder};
 use crate::status::{QUERY_REPLY, Shown, StatusBoard};
 use crate::{OutputFilter, ShellSpec};
 
@@ -84,6 +85,8 @@ pub enum SessionEvent {
     /// The pane's program status records changed (OSC 7501); read them with
     /// [`Session::status`].
     StatusChanged,
+    /// A recording ended because the shell exited; the file is complete.
+    RecordingSaved(PathBuf),
     /// The shell exited or the PTY closed.
     Exit,
 }
@@ -164,6 +167,8 @@ pub struct Session {
     status: Arc<Mutex<StatusBoard>>,
     /// Reads the shell's working directory and whether it runs a program.
     probe: ShellProbe,
+    /// The asciicast recording in progress, if any (see [`crate::record`]).
+    recorder: Arc<Mutex<Option<Recorder>>>,
 }
 
 /// Looks at the shell from any thread: its working directory, and whether it
@@ -327,6 +332,9 @@ impl Session {
         let reader_cwd = reported_cwd.clone();
         let reader_term = term.clone();
         let reader_pty_tx = pty_tx.clone();
+        let recorder: Arc<Mutex<Option<Recorder>>> = Arc::default();
+        let reader_recorder = recorder.clone();
+        let child_recorder = recorder.clone();
         thread::Builder::new()
             .name("pty-reader".into())
             .spawn(move || {
@@ -370,7 +378,13 @@ impl Session {
                             }
                             OscEvent::Status(message) => board.apply(message),
                             OscEvent::Progress(progress) => board.progress(progress),
-                            OscEvent::PromptStart => board.prompt(),
+                            OscEvent::PromptStart => {
+                                // Prompts are the recording's chapters.
+                                if let Some(rec) = reader_recorder.lock().unwrap().as_ref() {
+                                    rec.marker("");
+                                }
+                                board.prompt()
+                            }
                             OscEvent::Reset => board.reset(),
                             OscEvent::WorkingDir(dir) => {
                                 *reader_cwd.lock().unwrap() = Some(dir);
@@ -395,6 +409,12 @@ impl Session {
                     let syncing = {
                         let mut processor = processor.lock().unwrap();
                         let mut term = reader_term.lock();
+                        // Recorded under the terminal lock, so a recording
+                        // starting now has these bytes either in its screen
+                        // snapshot or as events, never both or neither.
+                        if let Some(rec) = reader_recorder.lock().unwrap().as_mut() {
+                            rec.output(&buf[..n]);
+                        }
                         // Parse up to each point where the filter needs the
                         // screen, and show it the screen there.
                         let mut start = 0;
@@ -427,6 +447,11 @@ impl Session {
             .spawn(move || {
                 let status = child.wait();
                 tracing::info!(?status, "shell exited");
+                if let Some(rec) = child_recorder.lock().unwrap().take() {
+                    let code = status.as_ref().map(|s| s.exit_code() as i32).ok();
+                    let path = rec.finish(code);
+                    let _ = events_tx.try_send(SessionEvent::RecordingSaved(path));
+                }
                 let _ = events_tx.try_send(SessionEvent::Exit);
             })?;
 
@@ -447,6 +472,7 @@ impl Session {
                     #[cfg(unix)]
                     master_fd,
                 },
+                recorder,
             },
             events_rx,
         ))
@@ -491,7 +517,43 @@ impl Session {
 
     /// Sends input bytes to the shell.
     pub fn write(&self, bytes: impl Into<Vec<u8>>) {
-        let _ = self.pty_tx.send(bytes.into());
+        let bytes = bytes.into();
+        if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+            rec.input(&bytes);
+        }
+        let _ = self.pty_tx.send(bytes);
+    }
+
+    /// Starts recording this pane to `path` (asciicast), from the screen as
+    /// it is now.
+    pub fn start_recording(&self, path: &Path, options: &RecordOptions) -> std::io::Result<()> {
+        // Terminal lock first, as the reader takes them (see the reader).
+        let term = self.term.lock();
+        let mut recorder = self.recorder.lock().unwrap();
+        if recorder.is_some() {
+            return Err(std::io::Error::other("already recording"));
+        }
+        let size = *self.size.lock().unwrap();
+        let snapshot = crate::record::screen_snapshot(&*term);
+        *recorder = Some(Recorder::start(
+            path, options, size.cols, size.rows, &snapshot,
+        )?);
+        Ok(())
+    }
+
+    /// Stops the recording, if any, and returns its file once written.
+    pub fn stop_recording(&self) -> Option<PathBuf> {
+        let recorder = self.recorder.lock().unwrap().take();
+        recorder.map(|rec| rec.finish(None))
+    }
+
+    /// The file being recorded to, if any.
+    pub fn recording(&self) -> Option<PathBuf> {
+        self.recorder
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|rec| rec.path().to_owned())
     }
 
     pub fn size(&self) -> TermSize {
@@ -507,6 +569,9 @@ impl Session {
                 return;
             }
             *size = new;
+        }
+        if let Some(rec) = self.recorder.lock().unwrap().as_ref() {
+            rec.resize(new.cols, new.rows);
         }
         let _ = self.resize_tx.send(new);
         self.term.lock().resize(new);

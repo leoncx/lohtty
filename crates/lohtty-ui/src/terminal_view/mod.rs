@@ -50,7 +50,9 @@ actions!(
         /// Makes this pane's text one point smaller.
         DecreaseFontSize,
         /// Back to the configured font size.
-        ResetFontSize
+        ResetFontSize,
+        /// Starts or stops recording this pane to an asciicast file.
+        ToggleRecording
     ]
 );
 
@@ -86,6 +88,8 @@ pub enum TerminalEvent {
     Attention(Option<Notification>),
     /// The program status shown for this pane changed (OSC 7501).
     StatusChanged,
+    /// A recording started or ended (the message to show), or failed.
+    Recording(Result<String, String>),
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -203,6 +207,8 @@ pub struct TerminalView {
     dim_unfocused: bool,
     /// Copy mouse selections to the clipboard when the button is released.
     copy_on_select: bool,
+    /// Where and how to record (asciicast).
+    recording: lohtty_config::RecordingConfig,
     /// Points added to the configured font size (Ctrl+= / Ctrl+-).
     font_zoom: f32,
     /// Ctrl+wheel movement not yet turned into a zoom step.
@@ -313,6 +319,7 @@ impl TerminalView {
             font: config.font.clone(),
             dim_unfocused: config.window.dim_unfocused,
             copy_on_select: config.copy_on_select,
+            recording: config.recording.clone(),
             focus,
             last_status: None,
             fonts: None,
@@ -350,6 +357,7 @@ impl TerminalView {
         self.theme = theme;
         self.dim_unfocused = config.window.dim_unfocused;
         self.copy_on_select = config.copy_on_select;
+        self.recording = config.recording.clone();
         cx.notify();
     }
 
@@ -456,6 +464,10 @@ impl TerminalView {
                 };
                 self.session.write(format(colors::to_term(rgb)));
             }
+            SessionEvent::RecordingSaved(path) => cx.emit(TerminalEvent::Recording(Ok(format!(
+                "Recording saved: {}",
+                path.display()
+            )))),
             SessionEvent::Exit => cx.emit(TerminalEvent::Exited),
         }
     }
@@ -567,6 +579,61 @@ impl TerminalView {
         set
     }
 
+    /// The file this pane is being recorded to, if any.
+    pub fn recording(&self) -> Option<PathBuf> {
+        self.session.recording()
+    }
+
+    /// Starts recording this pane (a new file in the recordings folder), or
+    /// stops the recording in progress.
+    fn toggle_recording(&mut self, _: &ToggleRecording, _: &mut Window, cx: &mut Context<Self>) {
+        use lohtty_term::record::{self, Format, Options};
+        if let Some(path) = self.session.stop_recording() {
+            let message = format!("Recording saved: {}", path.display());
+            cx.emit(TerminalEvent::Recording(Ok(message)));
+            cx.notify();
+            return;
+        }
+        let Some(dir) = self.recording.folder() else {
+            cx.emit(TerminalEvent::Recording(Err(
+                "No folder for recordings: set recording.dir".into(),
+            )));
+            return;
+        };
+        let stamp = record::local_timestamp();
+        let path = (1..)
+            .map(|n| match n {
+                1 => dir.join(format!("lohtty-{stamp}.cast")),
+                n => dir.join(format!("lohtty-{stamp}-{n}.cast")),
+            })
+            .find(|p| !p.exists())
+            .unwrap_or_else(|| dir.join("lohtty.cast"));
+        let hex = |c: lohtty_theme::Rgb| format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b);
+        let options = Options {
+            format: if self.recording.format == Some(2) {
+                Format::V2
+            } else {
+                Format::V3
+            },
+            input: self.recording.input,
+            idle_time_limit: self.recording.idle_time_limit.filter(|&s| s > 0.0),
+            // As the tab shows it (the shell's directory, or the program's title).
+            title: Some(self.title().to_owned()),
+            shell: Some(self.session.program().to_owned()),
+            theme: Some(record::CastTheme {
+                fg: hex(self.theme.foreground),
+                bg: hex(self.theme.background),
+                palette: self.theme.ansi.iter().map(|&c| hex(c)).collect(),
+            }),
+        };
+        let result = match self.session.start_recording(&path, &options) {
+            Ok(()) => Ok(format!("Recording to {}", path.display())),
+            Err(e) => Err(format!("Couldn't record to {}: {e}", path.display())),
+        };
+        cx.emit(TerminalEvent::Recording(result));
+        cx.notify();
+    }
+
     /// The configured font size plus this pane's zoom.
     fn font_size(&self) -> f32 {
         (self.font.size + self.font_zoom).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
@@ -675,6 +742,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::increase_font_size))
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
+            .on_action(cx.listener(Self::toggle_recording))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_any_mouse_down(cx.listener(Self::on_mouse_down))

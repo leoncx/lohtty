@@ -53,6 +53,10 @@ version and changelog section, and uses that section as the release notes.
 - `LOHTTY_CONFIG` names another config file to use.
 - A command palette (Ctrl+Shift+P, Cmd+Shift+P on macOS) lists every
   action with its shortcut; type to filter, Enter to run.
+- Record a pane to an asciinema file from the command palette: asciicast
+  v3 (or v2), starting from the current screen, with prompts as markers,
+  the theme, resizes and the exit code. Saved in Videos/lohtty by default
+  (`[recording]` section).
 
 ### Changed
 
