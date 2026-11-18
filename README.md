@@ -153,6 +153,7 @@ blur = true
 padding = 8
 width = 1000
 height = 650
+dim_unfocused = true       # fade the text of panes without focus
 
 [graphics]
 kitty = true               # kitty graphics protocol (new tabs and panes)

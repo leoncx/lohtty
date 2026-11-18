@@ -389,6 +389,12 @@ impl Render for SettingsDialog {
                 }),
             ),
             self.row(
+                "Dim unfocused panes",
+                self.toggle("dim-unfocused", d.window.dim_unfocused, cx, |c| {
+                    c.window.dim_unfocused = !c.window.dim_unfocused
+                }),
+            ),
+            self.row(
                 "Padding",
                 self.stepper(
                     "padding",

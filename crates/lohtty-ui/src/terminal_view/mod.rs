@@ -199,6 +199,8 @@ pub struct TerminalView {
     last_reported_cell: Option<(usize, usize)>,
     /// The open search bar and its state.
     search: Option<search::SearchState>,
+    /// Fade the text while neither the grid nor its search bar has focus.
+    dim_unfocused: bool,
     /// Points added to the configured font size (Ctrl+= / Ctrl+-).
     font_zoom: f32,
     /// Ctrl+wheel movement not yet turned into a zoom step.
@@ -307,6 +309,7 @@ impl TerminalView {
             shell_dir_check_pending: false,
             theme,
             font: config.font.clone(),
+            dim_unfocused: config.window.dim_unfocused,
             focus,
             last_status: None,
             fonts: None,
@@ -342,6 +345,7 @@ impl TerminalView {
             search.bar.update(cx, |bar, cx| bar.set_theme(theme, cx));
         }
         self.theme = theme;
+        self.dim_unfocused = config.window.dim_unfocused;
         cx.notify();
     }
 
@@ -626,6 +630,12 @@ impl Render for TerminalView {
             images: self.images.clone(),
             metrics,
             focused: self.focus.is_focused(window),
+            dimmed: self.dim_unfocused
+                && !self.focus.is_focused(window)
+                && !self
+                    .search
+                    .as_ref()
+                    .is_some_and(|s| s.bar.focus_handle(cx).is_focused(window)),
             painted: self.painted.clone(),
             // A pending dead key isn't shown: it isn't text yet.
             marked_text: self

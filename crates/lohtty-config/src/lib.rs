@@ -185,6 +185,8 @@ pub struct WindowConfig {
     pub padding: f32,
     pub width: f32,
     pub height: f32,
+    /// Fade the text of panes that don't have the focus.
+    pub dim_unfocused: bool,
 }
 
 impl Default for WindowConfig {
@@ -195,6 +197,7 @@ impl Default for WindowConfig {
             padding: 8.0,
             width: 1000.0,
             height: 650.0,
+            dim_unfocused: true,
         }
     }
 }

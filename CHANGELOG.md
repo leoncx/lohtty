@@ -44,6 +44,8 @@ version and changelog section, and uses that section as the release notes.
   macOS). The README shows how to turn the marks on in PowerShell and bash.
 - Font zoom per pane: Ctrl+= / Ctrl+- / Ctrl+0 (Cmd on macOS), or
   Ctrl+mouse wheel, a point at a time between 6 and 72.
+- Panes without the focus show their text faded, so the active one stands
+  out. Turn it off in Settings or with `window.dim_unfocused = false`.
 
 ### Changed
 

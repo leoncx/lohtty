@@ -37,6 +37,8 @@ pub(super) struct FramePainter {
     pub images: Option<super::images::ImageLayer>,
     pub metrics: CellMetrics,
     pub focused: bool,
+    /// Draw the text faded (an unfocused pane).
+    pub dimmed: bool,
     pub painted: Rc<Cell<PaintState>>,
     /// IME composition text to draw at the cursor.
     pub marked_text: Option<String>,
@@ -231,6 +233,9 @@ impl FramePainter {
                     std::mem::swap(&mut fg, &mut bg_c);
                 }
                 if flags.contains(Flags::DIM) {
+                    fg = colors::dim(fg, bg_c);
+                }
+                if self.dimmed {
                     fg = colors::dim(fg, bg_c);
                 }
                 let is_cursor = row_i == cursor_row && col == cursor_col;

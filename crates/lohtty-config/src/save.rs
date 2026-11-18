@@ -73,6 +73,7 @@ impl Config {
         set(window, "opacity", round2(self.window.opacity).into());
         set(window, "blur", self.window.blur.into());
         set(window, "padding", round2(self.window.padding).into());
+        set(window, "dim_unfocused", self.window.dim_unfocused.into());
 
         let usage = table(&mut doc, "usage");
         set(usage, "claude", self.usage.claude.into());
