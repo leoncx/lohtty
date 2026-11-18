@@ -123,7 +123,8 @@ The config lives at `%APPDATA%\lohtty\config.toml` on Windows,
 `$XDG_CONFIG_HOME/lohtty/config.toml` (usually `~/.config/lohtty`) on Linux. Every key is optional. Changes apply
 as soon as the file is saved, except `shell`, which only affects new tabs and
 panes. If a config is invalid, lohtty keeps the previous settings and shows a
-red error bar.
+red error bar. To use another file (a portable setup, a test), set the
+`LOHTTY_CONFIG` environment variable to its path.
 
 The **Settings** dialog edits the common options. Open it with the gear button
 in the title bar or with Ctrl+, (Cmd+, on macOS). Saving updates
@@ -133,6 +134,7 @@ are kept.
 ```toml
 theme = "tokyo-night"      # tokyo-night, tokyo-night-storm, tokyo-night-moon, tokyo-night-day
 scrollback = 10000
+copy_on_select = false     # copy mouse selections to the clipboard right away
 
 [shell]
 program = "pwsh.exe"       # default: pwsh.exe, else powershell.exe; $SHELL elsewhere
@@ -315,6 +317,8 @@ for copy, paste, search and tabs.
 | Action | Shortcut |
 |---|---|
 | Copy / paste | Ctrl+Shift+C / Ctrl+Shift+V (also Ctrl+Insert / Shift+Insert) |
+| Select a rectangle | Alt+drag (macOS: Option+drag) |
+| Paste the last selection (Linux) | Middle click |
 | Search | Ctrl+Shift+F |
 | Previous / next prompt (shell integration) | Ctrl+Shift+Up / Ctrl+Shift+Down (macOS: Cmd+Shift+Up / Down) |
 | Select and copy the last command's output | Ctrl+Shift+O (macOS: Cmd+Shift+O) |

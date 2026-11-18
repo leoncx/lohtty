@@ -31,6 +31,8 @@ pub struct Config {
     pub window: WindowConfig,
     pub theme: String,
     pub scrollback: usize,
+    /// Copy text to the clipboard as soon as it is selected with the mouse.
+    pub copy_on_select: bool,
     pub graphics: GraphicsConfig,
     pub notifications: NotificationsConfig,
     pub usage: UsageConfig,
@@ -44,6 +46,7 @@ impl Default for Config {
             window: WindowConfig::default(),
             theme: "tokyo-night".into(),
             scrollback: 10_000,
+            copy_on_select: false,
             graphics: GraphicsConfig::default(),
             notifications: NotificationsConfig::default(),
             usage: UsageConfig::default(),
@@ -212,10 +215,17 @@ pub fn themes_dir() -> Option<PathBuf> {
     config_dir().map(|d| d.join("themes"))
 }
 
+/// Environment variable naming another config file to use (portable setups,
+/// tests). Themes still come from the config directory.
+pub const CONFIG_ENV: &str = "LOHTTY_CONFIG";
+
 impl Config {
-    /// `<config dir>/config.toml`.
+    /// `$LOHTTY_CONFIG` if set, else `<config dir>/config.toml`.
     pub fn default_path() -> Option<PathBuf> {
-        config_dir().map(|d| d.join("config.toml"))
+        match std::env::var_os(CONFIG_ENV).filter(|p| !p.is_empty()) {
+            Some(path) => Some(PathBuf::from(path)),
+            None => config_dir().map(|d| d.join("config.toml")),
+        }
     }
 
     pub fn parse(src: &str, path: PathBuf) -> Result<Self, ConfigError> {

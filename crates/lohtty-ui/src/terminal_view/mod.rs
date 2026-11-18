@@ -201,6 +201,8 @@ pub struct TerminalView {
     search: Option<search::SearchState>,
     /// Fade the text while neither the grid nor its search bar has focus.
     dim_unfocused: bool,
+    /// Copy mouse selections to the clipboard when the button is released.
+    copy_on_select: bool,
     /// Points added to the configured font size (Ctrl+= / Ctrl+-).
     font_zoom: f32,
     /// Ctrl+wheel movement not yet turned into a zoom step.
@@ -310,6 +312,7 @@ impl TerminalView {
             theme,
             font: config.font.clone(),
             dim_unfocused: config.window.dim_unfocused,
+            copy_on_select: config.copy_on_select,
             focus,
             last_status: None,
             fonts: None,
@@ -346,6 +349,7 @@ impl TerminalView {
         }
         self.theme = theme;
         self.dim_unfocused = config.window.dim_unfocused;
+        self.copy_on_select = config.copy_on_select;
         cx.notify();
     }
 

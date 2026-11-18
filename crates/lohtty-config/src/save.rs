@@ -50,6 +50,11 @@ impl Config {
             "scrollback",
             (self.scrollback as i64).into(),
         );
+        set(
+            doc.as_table_mut(),
+            "copy_on_select",
+            self.copy_on_select.into(),
+        );
 
         let shell = table(&mut doc, "shell");
         match &self.shell.program {

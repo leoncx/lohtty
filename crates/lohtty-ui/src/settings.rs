@@ -448,6 +448,12 @@ impl Render for SettingsDialog {
                     },
                 ),
             ),
+            self.row(
+                "Copy on select",
+                self.toggle("copy-on-select", d.copy_on_select, cx, |c| {
+                    c.copy_on_select = !c.copy_on_select
+                }),
+            ),
         ];
         rows.extend(self.about());
 

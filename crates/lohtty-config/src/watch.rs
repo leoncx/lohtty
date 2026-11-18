@@ -1,8 +1,9 @@
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-use crate::config_dir;
+use crate::{Config, config_dir};
 
-/// Watches the config directory (config file and user themes) and calls
+/// Watches the config directory (config file and user themes), and the
+/// folder of a config file named by `LOHTTY_CONFIG`, and calls
 /// `on_change` when a `.toml` file is written, created or removed.
 ///
 /// The directory is watched rather than the file because editors often save
@@ -35,6 +36,14 @@ impl ConfigWatcher {
             })?;
         watcher.watch(&dir, RecursiveMode::Recursive)?;
         tracing::debug!(?dir, "watching config directory");
+        if let Some(other) = Config::default_path()
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .filter(|p| !p.starts_with(&dir) && p.is_dir())
+        {
+            watcher.watch(other, RecursiveMode::NonRecursive)?;
+            tracing::debug!(dir = ?other, "watching the LOHTTY_CONFIG directory");
+        }
         Ok(Self { _watcher: watcher })
     }
 }

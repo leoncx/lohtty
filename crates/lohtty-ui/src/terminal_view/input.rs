@@ -120,8 +120,12 @@ impl TerminalView {
         let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) else {
             return;
         };
+        self.paste_text(&text, cx);
+    }
+
+    fn paste_text(&mut self, text: &str, cx: &mut Context<Self>) {
         let mode = *self.session.term().lock().mode();
-        self.send_input(encode_paste(&text, mode), cx);
+        self.send_input(encode_paste(text, mode), cx);
     }
 
     // --- Mouse --------------------------------------------------------------
@@ -222,6 +226,8 @@ impl TerminalView {
                 let ty = match ev.click_count {
                     2 => SelectionType::Semantic,
                     n if n >= 3 => SelectionType::Lines,
+                    // Alt (Option) + drag selects a rectangle.
+                    _ if ev.modifiers.alt => SelectionType::Block,
                     _ => SelectionType::Simple,
                 };
                 let point = self.grid_point(col, row);
@@ -238,6 +244,13 @@ impl TerminalView {
                 }
                 None => self.paste(&Paste, window, cx),
             },
+            // Linux: middle click pastes the primary selection.
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            MouseButton::Middle => {
+                if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
+                    self.paste_text(&text, cx);
+                }
+            }
             _ => {}
         }
     }
@@ -277,9 +290,20 @@ impl TerminalView {
     pub(super) fn on_mouse_up(&mut self, ev: &MouseUpEvent, cx: &mut Context<Self>) {
         if self.selecting && ev.button == MouseButton::Left {
             self.selecting = false;
-            let mut term = self.session.term().lock();
-            if term.selection.as_ref().is_some_and(Selection::is_empty) {
-                term.selection = None;
+            {
+                let mut term = self.session.term().lock();
+                if term.selection.as_ref().is_some_and(Selection::is_empty) {
+                    term.selection = None;
+                }
+            }
+            // A finished selection: the primary selection on Linux, and the
+            // clipboard too with `copy_on_select`.
+            if let Some(text) = self.selection_text() {
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                cx.write_to_primary(ClipboardItem::new_string(text.clone()));
+                if self.copy_on_select {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
             }
             cx.notify();
         }

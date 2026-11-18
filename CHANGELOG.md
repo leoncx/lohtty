@@ -46,6 +46,11 @@ version and changelog section, and uses that section as the release notes.
   Ctrl+mouse wheel, a point at a time between 6 and 72.
 - Panes without the focus show their text faded, so the active one stands
   out. Turn it off in Settings or with `window.dim_unfocused = false`.
+- Alt+drag (Option+drag on macOS) selects a rectangle.
+- `copy_on_select` (also in Settings) copies mouse selections to the
+  clipboard as soon as the button is released. On Linux, selections also
+  go to the primary selection, which a middle click pastes.
+- `LOHTTY_CONFIG` names another config file to use.
 
 ### Changed
 
