@@ -1,5 +1,6 @@
 # Builds a release and packs it for distribution:
-#   dist/lohtty-<version>-windows-<arch>.zip      exe, README, LICENSE, CHANGELOG
+#   dist/lohtty-<version>-windows-<arch>.zip      exe and ConPTY, README, LICENSE,
+#                                                 CHANGELOG, THIRD-PARTY-NOTICES
 #   dist/lohtty-<version>-windows-<arch>-pdb.zip  debug symbols, for crash reports
 #   dist/lohtty-<version>-windows-<arch>.msi      per-user installer (with -Msi)
 #
@@ -45,11 +46,15 @@ try {
     $name = "lohtty-$version-windows-$arch"
     $dist = Join-Path $root 'dist'
     $bin = Join-Path $root "target/$Target/release"
+    # Microsoft's ConPTY next to the exe (see conpty.ps1); the MSI takes it
+    # from there too.
+    & (Join-Path $PSScriptRoot 'conpty.ps1') -Arch $arch -Dest $bin
 
     $stage = Join-Path $dist $name
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
     New-Item -ItemType Directory -Force $stage | Out-Null
-    Copy-Item (Join-Path $bin 'lohtty.exe'), 'README.md', 'LICENSE', 'CHANGELOG.md' $stage
+    $binaries = 'lohtty.exe', 'conpty.dll', 'OpenConsole.exe' | ForEach-Object { Join-Path $bin $_ }
+    Copy-Item ($binaries + 'README.md', 'LICENSE', 'CHANGELOG.md', 'THIRD-PARTY-NOTICES.md') $stage
     $zip = Join-Path $dist "$name.zip"
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
 

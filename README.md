@@ -88,6 +88,19 @@ cargo build --release --no-default-features  # without kitty graphics
 pwsh -File scripts/package.ps1 # dist\lohtty-<version>-windows-x64.zip
 ```
 
+On Windows, lohtty runs shells through Microsoft's ConPTY (`conpty.dll` and
+`OpenConsole.exe`, from the Windows Terminal project), shipped next to
+`lohtty.exe`: Windows' own copy can drop sequences it doesn't know, such as
+kitty graphics, so images wouldn't show. The packages include it; for a
+build from source, put it next to the exe once (it is downloaded from
+nuget.org, checked against a pinned hash and Microsoft's signature):
+
+```powershell
+pwsh -File scripts/conpty.ps1 -Dest target\debug,target\release
+```
+
+Without it, lohtty uses Windows' ConPTY and works, except for images.
+
 On Linux, install the development packages first (names for Debian and
 Ubuntu), then package with `scripts/package-linux.sh [--appimage]`:
 
@@ -326,4 +339,6 @@ Mouse:
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+Licensed under the [Apache License, Version 2.0](LICENSE). The Windows
+packages also include Microsoft's ConPTY, under the MIT License (see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)).

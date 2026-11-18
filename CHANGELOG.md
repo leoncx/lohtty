@@ -44,6 +44,10 @@ version and changelog section, and uses that section as the release notes.
 
 ### Fixed
 
+- Windows: kitty graphics images (and animations) show again. Recent
+  Windows updates make the system's ConPTY drop them, so lohtty now ships
+  Microsoft's ConPTY (`conpty.dll` and `OpenConsole.exe`, MIT) next to
+  `lohtty.exe`, in the zip and the installer.
 - macOS: Option+Left/Right move by word in the shell, and Option+Fn+Delete
   deletes the next word.
 - Zooming the window or switching to full screen no longer leaves copies of
