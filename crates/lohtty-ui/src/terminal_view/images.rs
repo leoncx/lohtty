@@ -53,7 +53,19 @@ pub(super) fn placeholder(
     col: usize,
     left: Option<PlaceholderCell>,
 ) -> PlaceholderAt {
-    let marks = cell.zerowidth().unwrap_or(&[]);
+    // Without shell integration marks, which aren't placeholder diacritics.
+    let all = cell.zerowidth().unwrap_or(&[]);
+    let kept: Vec<char>;
+    let marks = if all.iter().any(|&c| lohtty_term::prompt::is_mark(c)) {
+        kept = all
+            .iter()
+            .copied()
+            .filter(|&c| !lohtty_term::prompt::is_mark(c))
+            .collect();
+        &kept[..]
+    } else {
+        all
+    };
     let underline = cell.underline_color().map_or(0, color_id);
     PlaceholderAt {
         row,

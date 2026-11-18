@@ -111,8 +111,7 @@ impl TerminalView {
     // --- Clipboard ----------------------------------------------------------
 
     pub(super) fn copy(&mut self, _: &Copy, _window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.session.term().lock().selection_to_string();
-        if let Some(text) = text.filter(|t| !t.is_empty()) {
+        if let Some(text) = self.selection_text() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
@@ -231,17 +230,14 @@ impl TerminalView {
                 cx.notify();
             }
             // Like Windows Terminal: right click copies the selection, or pastes.
-            MouseButton::Right => {
-                let selection = self.session.term().lock().selection_to_string();
-                match selection.filter(|t| !t.is_empty()) {
-                    Some(text) => {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                        self.session.term().lock().selection = None;
-                        cx.notify();
-                    }
-                    None => self.paste(&Paste, window, cx),
+            MouseButton::Right => match self.selection_text() {
+                Some(text) => {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    self.session.term().lock().selection = None;
+                    cx.notify();
                 }
-            }
+                None => self.paste(&Paste, window, cx),
+            },
             _ => {}
         }
     }

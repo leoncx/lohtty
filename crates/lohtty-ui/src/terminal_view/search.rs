@@ -25,11 +25,8 @@ impl TerminalView {
             return;
         }
         let selection = self
-            .session
-            .term()
-            .lock()
-            .selection_to_string()
-            .filter(|s| !s.is_empty() && !s.contains('\n'))
+            .selection_text()
+            .filter(|s| !s.contains('\n'))
             .unwrap_or_default();
         let theme = self.theme.clone();
         let bar = cx.new(|cx| SearchBar::new(theme, selection, cx));

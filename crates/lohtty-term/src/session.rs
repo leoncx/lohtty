@@ -335,6 +335,8 @@ impl Session {
                 let mut notifications = OscScanner::default();
                 let mut modes = ModeWatcher::default();
                 let mut found = Vec::new();
+                let mut marker = crate::prompt::PromptMarker::new();
+                let mut marked = Vec::new();
                 loop {
                     let n = match reader.read(&mut buf) {
                         Ok(0) => break,
@@ -379,7 +381,11 @@ impl Session {
                     if status_changed {
                         let _ = proxy.events.try_send(SessionEvent::StatusChanged);
                     }
-                    filter.filter(&buf[..n], &mut out, &mut reply);
+                    // Prompt marks first: the kitty filter's checkpoints are
+                    // offsets into its own output.
+                    marked.clear();
+                    marker.mark(&buf[..n], &mut marked);
+                    filter.filter(&marked, &mut out, &mut reply);
                     // Filter replies go first, before the parser's own (a
                     // client may wait for its graphics replies, then DA1).
                     if !reply.is_empty() {

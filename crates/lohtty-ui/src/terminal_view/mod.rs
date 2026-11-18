@@ -5,6 +5,7 @@ mod box_drawing;
 mod images;
 mod input;
 mod paint;
+mod prompts;
 mod search;
 
 use std::cell::Cell;
@@ -32,7 +33,20 @@ use crate::fonts;
 use crate::paint_now::PaintNow;
 use paint::FramePainter;
 
-actions!(terminal, [Copy, Paste, Search]);
+actions!(
+    terminal,
+    [
+        Copy,
+        Paste,
+        Search,
+        /// Scrolls to the previous shell prompt (shell integration marks).
+        PreviousPrompt,
+        /// Scrolls to the next shell prompt.
+        NextPrompt,
+        /// Selects and copies the last command's output.
+        SelectLastOutput
+    ]
+);
 
 const KEY_CONTEXT: &str = "Terminal";
 
@@ -76,6 +90,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
             KeyBinding::new("cmd-c", Copy, ctx),
             KeyBinding::new("cmd-v", Paste, ctx),
             KeyBinding::new("cmd-f", Search, search_ctx),
+            KeyBinding::new("cmd-shift-up", PreviousPrompt, ctx),
+            KeyBinding::new("cmd-shift-down", NextPrompt, ctx),
+            KeyBinding::new("cmd-shift-o", SelectLastOutput, ctx),
         ]
     } else {
         vec![
@@ -84,6 +101,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
             KeyBinding::new("ctrl-insert", Copy, ctx),
             KeyBinding::new("shift-insert", Paste, ctx),
             KeyBinding::new("ctrl-shift-f", Search, search_ctx),
+            KeyBinding::new("ctrl-shift-up", PreviousPrompt, ctx),
+            KeyBinding::new("ctrl-shift-down", NextPrompt, ctx),
+            KeyBinding::new("ctrl-shift-o", SelectLastOutput, ctx),
         ]
     }
 }
@@ -579,6 +599,9 @@ impl Render for TerminalView {
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::paste))
+            .on_action(cx.listener(Self::previous_prompt))
+            .on_action(cx.listener(Self::next_prompt))
+            .on_action(cx.listener(Self::select_last_output))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_any_mouse_down(cx.listener(Self::on_mouse_down))

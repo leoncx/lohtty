@@ -14,6 +14,7 @@ use gpui::{
     Point, Rgba, ShapedLine, StrikethroughStyle, TextRun, UnderlineStyle, Window, WindowTextSystem,
     fill, outline, point, px, size,
 };
+use lohtty_term::prompt::{self, Mark};
 use lohtty_term::search::{self, Match, RegexSearch};
 use lohtty_term::{Session, TermSize};
 use lohtty_theme::Theme;
@@ -94,6 +95,11 @@ thread_local! {
 fn ligature_candidate(c: char) -> bool {
     c.is_ascii_punctuation()
 }
+
+/// The command status bar beside prompts, in the window padding: its width,
+/// and its distance from the grid.
+const STATUS_BAR_WIDTH: Pixels = px(2.0);
+const STATUS_BAR_GAP: Pixels = px(2.0);
 
 pub(super) struct Frame {
     rects: Vec<PaintQuad>,
@@ -186,6 +192,9 @@ impl FramePainter {
             let block_cursor = self.focused && cursor.shape == CursorShape::Block;
             let mut cursor_wide = false;
 
+            // Prompts on screen (shell integration marks): row and cell.
+            let mut prompts: Vec<(usize, GridPoint)> = Vec::new();
+
             let mut seg: Option<Segment> = None;
             // Blank cells seen after the current segment, not yet added to it.
             let mut pending_spaces = 0usize;
@@ -199,6 +208,14 @@ impl FramePainter {
                 let (row, col) = (row_i as usize, item.point.column.0);
                 let cell = item.cell;
                 let flags = cell.flags;
+                // Prompt marks are invisible characters on the prompt's
+                // first cell; only the first one of a row counts.
+                if prompt::cell_marks(cell.zerowidth())
+                    .any(|mark| matches!(mark, Mark::Prompt { .. }))
+                    && prompts.last().is_none_or(|(r, _)| *r != row)
+                {
+                    prompts.push((row, item.point));
+                }
                 if flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
                     continue;
                 }
@@ -290,7 +307,19 @@ impl FramePainter {
                 // Combining marks and variation selectors. A cell's extra
                 // storage also holds its underline color, so an empty list
                 // (`Some([])`) is common and means none.
-                let zerowidth = cell.zerowidth().filter(|zw| !zw.is_empty());
+                let kept: Vec<char>;
+                let zerowidth = match cell.zerowidth() {
+                    Some(zw) if zw.iter().any(|&c| prompt::is_mark(c)) => {
+                        kept = zw
+                            .iter()
+                            .copied()
+                            .filter(|&c| !prompt::is_mark(c))
+                            .collect();
+                        Some(&kept[..])
+                    }
+                    zw => zw,
+                }
+                .filter(|zw| !zw.is_empty());
                 let hyperlink = link.is_some();
                 let underlined = flags.intersects(Flags::ALL_UNDERLINES) || hyperlink;
                 let decorated = underlined || flags.contains(Flags::STRIKEOUT);
@@ -451,6 +480,27 @@ impl FramePainter {
                     }
                     CursorShape::Hidden => {}
                 }
+            }
+
+            // A bar in the left padding beside each prompt whose command
+            // finished: green when it succeeded, red when it failed.
+            for (row, at) in prompts {
+                let Some(ok) = prompt::result_of(&term, at) else {
+                    continue;
+                };
+                let color = to_rgba(if ok { theme.ansi[2] } else { theme.ansi[1] });
+                let cell = cell_bounds(row, 0, 1);
+                let height = m.line_height * 0.7;
+                rects.push(fill(
+                    Bounds::new(
+                        point(
+                            bounds.origin.x - STATUS_BAR_GAP - STATUS_BAR_WIDTH,
+                            cell.origin.y + (m.line_height - height) / 2.,
+                        ),
+                        size(STATUS_BAR_WIDTH, height),
+                    ),
+                    color,
+                ));
             }
         }
 

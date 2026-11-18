@@ -10,6 +10,7 @@ pub mod kitty;
 pub mod modes;
 pub mod mouse;
 pub mod notify;
+pub mod prompt;
 pub mod search;
 mod session;
 mod shell;

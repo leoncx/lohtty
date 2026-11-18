@@ -38,6 +38,11 @@ version and changelog section, and uses that section as the release notes.
   themselves. Frames can be built from earlier ones and composed onto each
   other. An animation runs only while it is on screen.
 
+- Shell integration (OSC 133): a green or red bar beside each prompt whose
+  command succeeded or failed, Ctrl+Shift+Up/Down to jump between prompts,
+  and Ctrl+Shift+O to select and copy the last command's output (Cmd on
+  macOS). The README shows how to turn the marks on in PowerShell and bash.
+
 ### Changed
 
 - Tabs share the title bar equally (two take half each, three a third).

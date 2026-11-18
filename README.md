@@ -20,6 +20,9 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 - Mouse selection, clipboard, bracketed paste
 - Mouse reporting for terminal apps
 - OSC 8 hyperlinks
+- Shell integration (OSC 133): jump between prompts, select a command's
+  output in one key, and a green or red mark beside each command that
+  succeeded or failed
 - Coding agents' session status on their tab (working, waiting for you, done,
   failed), through the Program Status Protocol (OSC 7501)
 - Claude and Codex usage limits on the title bar: the session and the week
@@ -180,6 +183,56 @@ ansi = [
 ]
 ```
 
+## Shell integration
+
+When the shell marks its prompts and its commands' output (OSC 133, as in
+other terminals), lohtty:
+
+- puts a thin green or red bar beside each prompt whose command succeeded or
+  failed (a prompt where nothing ran gets none);
+- jumps between prompts with **Ctrl+Shift+Up / Down** (macOS: Cmd+Shift+Up /
+  Down): the previous or next prompt comes to the top of the view, and past
+  the last one, back to the bottom;
+- selects and copies the last command's output with **Ctrl+Shift+O**
+  (macOS: Cmd+Shift+O), scrolling up to its start if needed.
+
+Some prompts send the marks on their own (oh-my-posh with
+`"shell_integration": true`, fish 4); otherwise add one of these to your
+shell's profile.
+
+**PowerShell** (`$PROFILE`; with oh-my-posh, use its option instead):
+
+```powershell
+$global:__lohttyHistory = -1
+function prompt {
+    $ok = $?
+    $e = [char]27
+    # D: the result of the command just run, if one ran.
+    $last = Get-History -Count 1
+    $done = if ($last -and $last.Id -ne $global:__lohttyHistory) {
+        $global:__lohttyHistory = $last.Id
+        "$e]133;D;$(if ($ok) { 0 } else { 1 })$e\"
+    } else { "$e]133;D$e\" }
+    "$done$e]133;A$e\PS $($PWD.Path)> $e]133;B$e\"
+}
+Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
+    [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+    [Console]::Write("$([char]27)]133;C$([char]27)\")
+}
+```
+
+**bash** (`~/.bashrc`, after `PS1` is set):
+
+```sh
+PS0=$'\e]133;C\e\\'
+PROMPT_COMMAND='printf "\e]133;D;%s\e\\\\" "$?"'"${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+PS1='\[\e]133;A\e\\\]'"$PS1"'\[\e]133;B\e\\\]'
+```
+
+The marks are invisible characters lohtty adds to the first character of
+each prompt and output, so they scroll with the text and go when it is
+cleared; they aren't copied.
+
 ## Coding agents and attention alerts
 
 When a program rings the bell or asks for a notification (OSC 9, OSC 777 or
@@ -262,6 +315,8 @@ for copy, paste, search and tabs.
 |---|---|
 | Copy / paste | Ctrl+Shift+C / Ctrl+Shift+V (also Ctrl+Insert / Shift+Insert) |
 | Search | Ctrl+Shift+F |
+| Previous / next prompt (shell integration) | Ctrl+Shift+Up / Ctrl+Shift+Down (macOS: Cmd+Shift+Up / Down) |
+| Select and copy the last command's output | Ctrl+Shift+O (macOS: Cmd+Shift+O) |
 | Next / previous match (in search) | Enter / Shift+Enter |
 | Close search | Esc |
 | New tab | Ctrl+Shift+T |
