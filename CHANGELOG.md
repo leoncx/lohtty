@@ -42,6 +42,8 @@ version and changelog section, and uses that section as the release notes.
   command succeeded or failed, Ctrl+Shift+Up/Down to jump between prompts,
   and Ctrl+Shift+O to select and copy the last command's output (Cmd on
   macOS). The README shows how to turn the marks on in PowerShell and bash.
+- Font zoom per pane: Ctrl+= / Ctrl+- / Ctrl+0 (Cmd on macOS), or
+  Ctrl+mouse wheel, a point at a time between 6 and 72.
 
 ### Changed
 

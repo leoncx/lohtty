@@ -308,6 +308,21 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Ctrl+wheel zooms the text a point per notch. A notch's size in
+        // lines follows a system setting gpui doesn't expose, so each full
+        // line of movement is one step, whatever the notch's size.
+        if ev.modifiers.control {
+            self.zoom_accum += match ev.delta {
+                ScrollDelta::Lines(p) => p.y,
+                ScrollDelta::Pixels(p) => p.y / self.line_height(),
+            };
+            if self.zoom_accum.abs() >= 1.0 {
+                let step = self.zoom_accum.signum();
+                self.zoom_accum = 0.0;
+                self.zoom_font(step, cx);
+            }
+            return;
+        }
         let line_height = self.line_height();
         self.scroll_accum += match ev.delta {
             ScrollDelta::Lines(p) => p.y,

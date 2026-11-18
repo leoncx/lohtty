@@ -44,9 +44,19 @@ actions!(
         /// Scrolls to the next shell prompt.
         NextPrompt,
         /// Selects and copies the last command's output.
-        SelectLastOutput
+        SelectLastOutput,
+        /// Makes this pane's text one point larger.
+        IncreaseFontSize,
+        /// Makes this pane's text one point smaller.
+        DecreaseFontSize,
+        /// Back to the configured font size.
+        ResetFontSize
     ]
 );
+
+/// Smallest and largest font sizes reachable by zooming, in points.
+const MIN_FONT_SIZE: f32 = 6.0;
+const MAX_FONT_SIZE: f32 = 72.0;
 
 const KEY_CONTEXT: &str = "Terminal";
 
@@ -93,6 +103,10 @@ pub fn key_bindings() -> Vec<KeyBinding> {
             KeyBinding::new("cmd-shift-up", PreviousPrompt, ctx),
             KeyBinding::new("cmd-shift-down", NextPrompt, ctx),
             KeyBinding::new("cmd-shift-o", SelectLastOutput, ctx),
+            KeyBinding::new("cmd-=", IncreaseFontSize, ctx),
+            KeyBinding::new("cmd-+", IncreaseFontSize, ctx),
+            KeyBinding::new("cmd--", DecreaseFontSize, ctx),
+            KeyBinding::new("cmd-0", ResetFontSize, ctx),
         ]
     } else {
         vec![
@@ -104,6 +118,10 @@ pub fn key_bindings() -> Vec<KeyBinding> {
             KeyBinding::new("ctrl-shift-up", PreviousPrompt, ctx),
             KeyBinding::new("ctrl-shift-down", NextPrompt, ctx),
             KeyBinding::new("ctrl-shift-o", SelectLastOutput, ctx),
+            KeyBinding::new("ctrl-=", IncreaseFontSize, ctx),
+            KeyBinding::new("ctrl-+", IncreaseFontSize, ctx),
+            KeyBinding::new("ctrl--", DecreaseFontSize, ctx),
+            KeyBinding::new("ctrl-0", ResetFontSize, ctx),
         ]
     }
 }
@@ -181,6 +199,10 @@ pub struct TerminalView {
     last_reported_cell: Option<(usize, usize)>,
     /// The open search bar and its state.
     search: Option<search::SearchState>,
+    /// Points added to the configured font size (Ctrl+= / Ctrl+-).
+    font_zoom: f32,
+    /// Ctrl+wheel movement not yet turned into a zoom step.
+    zoom_accum: f32,
     /// When the last output-driven repaint was requested, and whether one is
     /// already scheduled (see [`TerminalView::output_frame`]).
     last_output_frame: Option<Instant>,
@@ -296,6 +318,8 @@ impl TerminalView {
             reported_button: None,
             last_reported_cell: None,
             search: None,
+            font_zoom: 0.0,
+            zoom_accum: 0.0,
             last_output_frame: None,
             output_frame_pending: false,
             paint_now: PaintNow::default(),
@@ -511,7 +535,7 @@ impl TerminalView {
             make(true, true),
         ];
 
-        let font_size = px(self.font.size);
+        let font_size = px(self.font_size());
         let text_system = window.text_system();
         let font_id = text_system.resolve_font(&fonts[0]);
         let advance = text_system
@@ -533,6 +557,38 @@ impl TerminalView {
         };
         self.fonts = Some(set.clone());
         set
+    }
+
+    /// The configured font size plus this pane's zoom.
+    fn font_size(&self) -> f32 {
+        (self.font.size + self.font_zoom).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+    }
+
+    /// Changes this pane's zoom by `points` (0 resets it).
+    pub(super) fn zoom_font(&mut self, points: f32, cx: &mut Context<Self>) {
+        let before = self.font_size();
+        self.font_zoom = if points == 0.0 {
+            0.0
+        } else {
+            // From the size shown, so zooming back from a limit takes one step.
+            (before + points).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE) - self.font.size
+        };
+        if self.font_size() != before {
+            self.fonts = None;
+            cx.notify();
+        }
+    }
+
+    fn increase_font_size(&mut self, _: &IncreaseFontSize, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_font(1.0, cx);
+    }
+
+    fn decrease_font_size(&mut self, _: &DecreaseFontSize, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_font(-1.0, cx);
+    }
+
+    fn reset_font_size(&mut self, _: &ResetFontSize, _: &mut Window, cx: &mut Context<Self>) {
+        self.zoom_font(0.0, cx);
     }
 
     fn line_height(&self) -> Pixels {
@@ -602,6 +658,9 @@ impl Render for TerminalView {
             .on_action(cx.listener(Self::previous_prompt))
             .on_action(cx.listener(Self::next_prompt))
             .on_action(cx.listener(Self::select_last_output))
+            .on_action(cx.listener(Self::increase_font_size))
+            .on_action(cx.listener(Self::decrease_font_size))
+            .on_action(cx.listener(Self::reset_font_size))
             .on_key_down(cx.listener(Self::on_key_down))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_any_mouse_down(cx.listener(Self::on_mouse_down))

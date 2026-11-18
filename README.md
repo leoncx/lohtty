@@ -317,6 +317,7 @@ for copy, paste, search and tabs.
 | Search | Ctrl+Shift+F |
 | Previous / next prompt (shell integration) | Ctrl+Shift+Up / Ctrl+Shift+Down (macOS: Cmd+Shift+Up / Down) |
 | Select and copy the last command's output | Ctrl+Shift+O (macOS: Cmd+Shift+O) |
+| Larger / smaller / default text (this pane) | Ctrl+= / Ctrl+- / Ctrl+0, or Ctrl+mouse wheel (macOS: Cmd+= / Cmd+- / Cmd+0) |
 | Next / previous match (in search) | Enter / Shift+Enter |
 | Close search | Esc |
 | New tab | Ctrl+Shift+T |
