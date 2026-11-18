@@ -978,6 +978,7 @@ impl Render for Workspace {
             .font_family(crate::fonts::family(&self.config.font.family, window))
             .text_size(px(self.config.font.size))
             .on_action(cx.listener(Self::open_settings))
+            .on_action(cx.listener(Self::open_command_palette))
             // While the settings dialog is open, workspace shortcuts would act
             // on the panes behind it; only Ctrl+, (refocus the dialog) stays.
             .when(self.settings.is_none(), |el| {
@@ -1068,6 +1069,29 @@ impl Render for Workspace {
                             .bg(rgba(0x0000_0070))
                             .occlude()
                             .child(dialog.clone())
+                    }))
+                    // The palette sits near the top; a click beside it
+                    // closes it.
+                    .children(self.palette.as_ref().map(|(palette, _)| {
+                        div()
+                            .absolute()
+                            .top(px(0.0))
+                            .left(px(0.0))
+                            .right(px(0.0))
+                            .bottom(px(0.0))
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .pt(px(48.0))
+                            .occlude()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.palette = None;
+                                    this.focus_active_pane(window, cx);
+                                }),
+                            )
+                            .child(palette.clone())
                     })),
             );
         self.decorate(content, window)

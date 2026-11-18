@@ -17,6 +17,7 @@ use lohtty_term::status::{Kind, Shown, State};
 use lohtty_theme::Theme;
 use lohtty_usage::{Poller, PollerOptions, Provider, Update};
 
+use crate::command_palette::{Command, CommandPalette, PaletteEvent, shortcut_text};
 use crate::notifier::{self, Notifier, TaskbarProgress};
 use crate::pane_tree::{Axis, Direction, PaneTree, Removed, SplitId};
 use crate::settings::{SettingsDialog, SettingsEvent};
@@ -49,6 +50,7 @@ actions!(
         ActivateTab9,
         OpenSettings,
         TogglePaneZoom,
+        OpenCommandPalette,
     ]
 );
 
@@ -56,6 +58,42 @@ const KEY_CONTEXT: &str = "Workspace";
 const APP_TITLE: &str = "lohtty";
 /// Shortest time between two desktop notifications from the same pane.
 const NOTIFY_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The commands the palette lists, in its order.
+fn palette_commands() -> Vec<(&'static str, Box<dyn gpui::Action>)> {
+    use crate::terminal_view as t;
+    vec![
+        ("New tab", Box::new(NewTab)),
+        ("Close tab", Box::new(CloseTab)),
+        ("Next tab", Box::new(NextTab)),
+        ("Previous tab", Box::new(PrevTab)),
+        ("Go to the last tab", Box::new(ActivateTab9)),
+        ("Split right", Box::new(SplitRight)),
+        ("Split down", Box::new(SplitDown)),
+        ("Close pane", Box::new(ClosePane)),
+        (
+            "Zoom the pane (fill the tab) / show all panes",
+            Box::new(TogglePaneZoom),
+        ),
+        ("Focus the pane on the left", Box::new(FocusLeft)),
+        ("Focus the pane on the right", Box::new(FocusRight)),
+        ("Focus the pane above", Box::new(FocusUp)),
+        ("Focus the pane below", Box::new(FocusDown)),
+        ("Copy", Box::new(t::Copy)),
+        ("Paste", Box::new(t::Paste)),
+        ("Search", Box::new(t::Search)),
+        ("Previous prompt", Box::new(t::PreviousPrompt)),
+        ("Next prompt", Box::new(t::NextPrompt)),
+        (
+            "Select and copy the last command's output",
+            Box::new(t::SelectLastOutput),
+        ),
+        ("Larger text", Box::new(t::IncreaseFontSize)),
+        ("Smaller text", Box::new(t::DecreaseFontSize)),
+        ("Default text size", Box::new(t::ResetFontSize)),
+        ("Settings", Box::new(OpenSettings)),
+    ]
+}
 
 /// Default key bindings (close to Windows Terminal's on Windows and Linux).
 pub fn key_bindings() -> Vec<KeyBinding> {
@@ -98,6 +136,15 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         ]
     };
     bindings.extend([
+        KeyBinding::new(
+            if cfg!(target_os = "macos") {
+                "cmd-shift-p"
+            } else {
+                "ctrl-shift-p"
+            },
+            OpenCommandPalette,
+            ctx,
+        ),
         KeyBinding::new("ctrl-tab", NextTab, ctx),
         KeyBinding::new("ctrl-shift-tab", PrevTab, ctx),
         KeyBinding::new(
@@ -170,6 +217,8 @@ pub struct Workspace {
     titlebar_pressed: bool,
     /// The open settings dialog, if any.
     settings: Option<(Entity<SettingsDialog>, Subscription)>,
+    /// The open command palette.
+    palette: Option<(Entity<CommandPalette>, Subscription)>,
     pane_subscriptions: HashMap<EntityId, Subscription>,
     /// Panes that asked for attention since they were last focused.
     attention: HashSet<EntityId>,
@@ -278,6 +327,7 @@ impl Workspace {
             dragging: None,
             titlebar_pressed: false,
             settings: None,
+            palette: None,
             pane_subscriptions: HashMap::new(),
             attention: HashSet::new(),
             last_notified: HashMap::new(),
@@ -693,6 +743,61 @@ impl Workspace {
         };
         tab.panes.resize(drag.split, drag.index, fraction);
         cx.notify();
+    }
+
+    // --- Command palette -----------------------------------------------------
+
+    /// Opens the palette, or closes it when it is open.
+    fn open_command_palette(
+        &mut self,
+        _: &OpenCommandPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.palette.take().is_some() {
+            self.focus_active_pane(window, cx);
+            return;
+        }
+        let Some(tab) = self.tabs.get(self.active_tab) else {
+            return;
+        };
+        // Shortcuts as they apply in the active pane.
+        let pane = tab.active.focus_handle(cx);
+        let commands = palette_commands()
+            .into_iter()
+            .map(|(label, action)| {
+                let shortcut = window
+                    .bindings_for_action_in(action.as_ref(), &pane)
+                    .first()
+                    .map(shortcut_text);
+                Command {
+                    label,
+                    action,
+                    shortcut,
+                }
+            })
+            .collect();
+        let theme = self.theme.clone();
+        let palette = cx.new(|cx| CommandPalette::new(commands, theme, window, cx));
+        let subscription = cx.subscribe_in(&palette, window, Self::on_palette_event);
+        window.focus(&palette.focus_handle(cx));
+        self.palette = Some((palette, subscription));
+        cx.notify();
+    }
+
+    fn on_palette_event(
+        &mut self,
+        _: &Entity<CommandPalette>,
+        event: &PaletteEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.palette = None;
+        // The action runs on the pane, as its shortcut would.
+        self.focus_active_pane(window, cx);
+        if let PaletteEvent::Run(action) = event {
+            window.dispatch_action(action.boxed_clone(), cx);
+        }
     }
 
     // --- Settings dialog -----------------------------------------------------

@@ -147,19 +147,19 @@ impl Focusable for SettingsDialog {
 }
 
 /// Colors used by the dialog, derived from the theme.
-struct Palette {
-    panel: Rgba,
-    fg: Rgba,
-    muted: Rgba,
-    border: Rgba,
-    hover: Rgba,
-    accent: Rgba,
-    on_accent: Rgba,
-    error: Rgba,
+pub(crate) struct Palette {
+    pub panel: Rgba,
+    pub fg: Rgba,
+    pub muted: Rgba,
+    pub border: Rgba,
+    pub hover: Rgba,
+    pub accent: Rgba,
+    pub on_accent: Rgba,
+    pub error: Rgba,
 }
 
 impl Palette {
-    fn new(t: &Theme) -> Self {
+    pub(crate) fn new(t: &Theme) -> Self {
         Self {
             panel: to_rgba(mix(t.background, t.foreground, 0.05)),
             fg: to_rgba(t.foreground),
@@ -173,7 +173,7 @@ impl Palette {
     }
 }
 
-fn field_style(t: &Theme) -> TextFieldStyle {
+pub(crate) fn field_style(t: &Theme) -> TextFieldStyle {
     let p = Palette::new(t);
     TextFieldStyle {
         bg: to_rgba(t.background),

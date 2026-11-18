@@ -334,6 +334,7 @@ for copy, paste, search and tabs.
 | Zoom the pane (fill the tab) / show all panes | Ctrl+Shift+Z (macOS: Cmd+Shift+Enter) |
 | Close pane | Ctrl+Shift+W |
 | Settings | Ctrl+, |
+| Command palette (every action by name, with its shortcut) | Ctrl+Shift+P (macOS: Cmd+Shift+P) |
 
 Mouse:
 - Drag to select. Double-click selects a word, triple-click a line.

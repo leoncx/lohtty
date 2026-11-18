@@ -51,6 +51,8 @@ version and changelog section, and uses that section as the release notes.
   clipboard as soon as the button is released. On Linux, selections also
   go to the primary selection, which a middle click pastes.
 - `LOHTTY_CONFIG` names another config file to use.
+- A command palette (Ctrl+Shift+P, Cmd+Shift+P on macOS) lists every
+  action with its shortcut; type to filter, Enter to run.
 
 ### Changed
 
