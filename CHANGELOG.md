@@ -18,6 +18,10 @@ version and changelog section, and uses that section as the release notes.
 - New tabs and splits start in the active pane's directory. On macOS and
   Linux it works with any shell; on Windows the shell must report it (OSC 7
   or OSC 9;9, see the README).
+- While the shell is at its prompt, the tab and window title show its
+  directory (`~` for home) instead of the shell's name; a running program
+  still shows its own title. Windows needs the same directory report as
+  above.
 - An About section at the bottom of Settings: version, release date and
   commit.
 - Linux: lohtty draws its own title bar, as on Windows: the tabs, with

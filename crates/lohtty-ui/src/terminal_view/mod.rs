@@ -45,6 +45,10 @@ const MIN_OUTPUT_FRAME: Duration = Duration::from_millis(12);
 /// painted immediately (see [`PaintNow`]); other output waits for vsync.
 const ECHO_WINDOW: Duration = Duration::from_millis(250);
 
+/// How long after output the shell's directory is looked at (see
+/// [`TerminalView::check_shell_dir`]).
+const SHELL_DIR_CHECK_DELAY: Duration = Duration::from_millis(200);
+
 /// Events a terminal view reports to its container (tab / workspace).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
@@ -136,6 +140,10 @@ pub struct TerminalView {
     /// Set by the application (OSC 0/2), or the shell's name.
     title: String,
     default_title: String,
+    /// The shell's working directory, shown as the title while the shell is
+    /// at its prompt (see [`TerminalView::check_shell_dir`]).
+    shell_dir: Option<String>,
+    shell_dir_check_pending: bool,
     theme: Theme,
     font: FontConfig,
     focus: FocusHandle,
@@ -253,6 +261,8 @@ impl TerminalView {
             session: Rc::new(session),
             title: default_title.clone(),
             default_title,
+            shell_dir: None,
+            shell_dir_check_pending: false,
             theme,
             font: config.font.clone(),
             focus,
@@ -326,8 +336,38 @@ impl TerminalView {
         }
     }
 
+    /// The shell's working directory while it is at its prompt, else the
+    /// title set by the running program.
     pub fn title(&self) -> &str {
-        &self.title
+        self.shell_dir.as_deref().unwrap_or(&self.title)
+    }
+
+    /// Looks, shortly after output, whether the shell is at its prompt and
+    /// in which directory. Output is what follows a `cd`, a program starting
+    /// or a program ending (the next prompt), and the delay lets a program
+    /// that was just typed start. At most one check is pending, so streaming
+    /// output checks every [`SHELL_DIR_CHECK_DELAY`].
+    fn check_shell_dir(&mut self, cx: &mut Context<Self>) {
+        if self.shell_dir_check_pending {
+            return;
+        }
+        self.shell_dir_check_pending = true;
+        let probe = self.session.probe();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(SHELL_DIR_CHECK_DELAY).await;
+            let dir = cx
+                .background_executor()
+                .spawn(async move { probe.shell_dir().map(|d| lohtty_term::display_dir(&d)) })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.shell_dir_check_pending = false;
+                if this.shell_dir != dir {
+                    this.shell_dir = dir;
+                    cx.emit(TerminalEvent::TitleChanged);
+                }
+            });
+        })
+        .detach();
     }
 
     /// The shell's working directory, for a new pane to start in.
@@ -346,7 +386,8 @@ impl TerminalView {
         match event {
             SessionEvent::Wakeup => {
                 crate::perf::output_received();
-                self.output_frame(cx)
+                self.output_frame(cx);
+                self.check_shell_dir(cx);
             }
             SessionEvent::Title(title) => self.set_title(title, cx),
             SessionEvent::ResetTitle => self.set_title(self.default_title.clone(), cx),

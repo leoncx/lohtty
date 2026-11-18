@@ -162,9 +162,55 @@ pub struct Session {
     win32_input: Arc<AtomicBool>,
     /// Program status records (OSC 7501).
     status: Arc<Mutex<StatusBoard>>,
+    /// Reads the shell's working directory and whether it runs a program.
+    probe: ShellProbe,
+}
+
+/// Looks at the shell from any thread: its working directory, and whether it
+/// is at its prompt.
+#[derive(Clone)]
+pub struct ShellProbe {
     /// The shell's process id, and the working directory it last reported.
     pid: Option<u32>,
     reported_cwd: Arc<Mutex<Option<PathBuf>>>,
+    /// The PTY master, to ask for the foreground process group. Owned by
+    /// the `pty-resize` thread, which lives as long as the session.
+    #[cfg(unix)]
+    master_fd: Option<std::os::fd::RawFd>,
+}
+
+impl ShellProbe {
+    /// The shell's working directory (see [`crate::cwd`]). `None` when
+    /// neither the shell reported it nor the platform can read it.
+    pub fn cwd(&self) -> Option<PathBuf> {
+        let reported = self.reported_cwd.lock().unwrap().clone();
+        let process = self.pid.and_then(crate::cwd::process_cwd);
+        crate::cwd::pick(reported.as_deref(), process.as_deref())
+    }
+
+    /// Whether the shell is in the foreground, not running a program.
+    /// `None` when it can't be told.
+    pub fn shell_in_foreground(&self) -> Option<bool> {
+        let pid = self.pid?;
+        #[cfg(unix)]
+        return crate::foreground::shell_in_foreground(pid, self.master_fd?);
+        #[cfg(windows)]
+        return crate::foreground::shell_in_foreground(pid);
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = pid;
+            None
+        }
+    }
+
+    /// The shell's working directory while the shell is in the foreground;
+    /// `None` while a program runs, or when either can't be told.
+    pub fn shell_dir(&self) -> Option<PathBuf> {
+        match self.shell_in_foreground() {
+            Some(true) => self.cwd(),
+            _ => None,
+        }
+    }
 }
 
 impl Session {
@@ -216,6 +262,8 @@ impl Session {
         tracing::info!(program = %shell.program, ?pid, "shell spawned");
 
         let master = pair.master;
+        #[cfg(unix)]
+        let master_fd = master.as_raw_fd();
         let mut reader = master.try_clone_reader()?;
         let mut writer = master.take_writer()?;
         let killer = child.clone_killer();
@@ -387,20 +435,26 @@ impl Session {
                 program: shell.program.clone(),
                 win32_input,
                 status,
-                pid,
-                reported_cwd,
+                probe: ShellProbe {
+                    pid,
+                    reported_cwd,
+                    #[cfg(unix)]
+                    master_fd,
+                },
             },
             events_rx,
         ))
     }
 
     /// The shell's working directory, to start a new pane in (see
-    /// [`crate::cwd`]). `None` when neither the shell reported it nor the
-    /// platform can read it.
+    /// [`ShellProbe::cwd`]).
     pub fn cwd(&self) -> Option<PathBuf> {
-        let reported = self.reported_cwd.lock().unwrap().clone();
-        let process = self.pid.and_then(crate::cwd::process_cwd);
-        crate::cwd::pick(reported.as_deref(), process.as_deref())
+        self.probe.cwd()
+    }
+
+    /// Looks at the shell from another thread.
+    pub fn probe(&self) -> ShellProbe {
+        self.probe.clone()
     }
 
     /// The program running in this session, as given to [`Session::spawn`].

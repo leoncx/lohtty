@@ -207,3 +207,43 @@ fn shell_starts_in_cwd_and_session_follows_it() {
         std::path::Path::new("/usr").canonicalize().unwrap()
     );
 }
+
+/// The probe sees the shell at its prompt, in its directory, and not while
+/// it runs a program.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn probe_tells_the_shell_from_a_running_program() {
+    let start = std::env::temp_dir().canonicalize().unwrap();
+    let mut shell = ShellSpec::new("/bin/sh", vec!["-i".into()]);
+    shell.cwd = Some(start.clone());
+    let size = TermSize {
+        cols: 200,
+        rows: 24,
+        cell_width: 8,
+        cell_height: 16,
+    };
+    let (session, _events) = Session::spawn(&shell, size, 100, Box::new(PassThrough)).unwrap();
+    let probe = session.probe();
+    let wait_for = |what: &str, ok: &dyn Fn() -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ok() {
+            assert!(Instant::now() < deadline, "never {what}");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    let canonical = |p: Option<std::path::PathBuf>| p.and_then(|p| p.canonicalize().ok());
+    wait_for("at the prompt", &|| {
+        canonical(probe.shell_dir()) == Some(start.clone())
+    });
+
+    session.write("sleep 3; cd /usr\n");
+    wait_for("running sleep", &|| {
+        probe.shell_in_foreground() == Some(false)
+    });
+    assert_eq!(probe.shell_dir(), None);
+
+    let usr = std::path::Path::new("/usr").canonicalize().unwrap();
+    wait_for("back in /usr", &|| {
+        canonical(probe.shell_dir()) == Some(usr.clone())
+    });
+}

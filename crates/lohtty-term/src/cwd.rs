@@ -50,6 +50,25 @@ pub fn pick(reported: Option<&Path>, process: Option<&Path>) -> Option<PathBuf> 
     }
 }
 
+/// `path` as shown in a title: under the home directory it starts with `~`.
+pub fn display_dir(path: &Path) -> String {
+    display_with_home(path, dirs::home_dir().as_deref())
+}
+
+fn display_with_home(path: &Path, home: Option<&Path>) -> String {
+    let Some(rest) = home.and_then(|home| path.strip_prefix(home).ok()) else {
+        return path.display().to_string();
+    };
+    // Rebuilt from the components, so an OSC 7 path (`C:/Users/me/src`)
+    // uses the platform's separator like the home directory.
+    let mut shown = String::from("~");
+    for part in rest.components() {
+        shown.push(std::path::MAIN_SEPARATOR);
+        shown.push_str(&part.as_os_str().to_string_lossy());
+    }
+    shown
+}
+
 fn same_dir(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
@@ -175,6 +194,24 @@ mod tests {
         );
         assert_eq!(parse_osc9_9("C:\\a"), Some(PathBuf::from("C:\\a")));
         assert_eq!(parse_osc9_9(""), None);
+    }
+
+    #[test]
+    fn home_is_shown_as_tilde() {
+        let home = std::env::temp_dir().join("me");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(display_with_home(&home, Some(&home)), "~");
+        assert_eq!(
+            display_with_home(&home.join("src").join("app"), Some(&home)),
+            format!("~{sep}src{sep}app")
+        );
+        // Only whole components: `meow` is not under `me`.
+        let beside = std::env::temp_dir().join("meow");
+        assert_eq!(
+            display_with_home(&beside, Some(&home)),
+            beside.display().to_string()
+        );
+        assert_eq!(display_with_home(&home, None), home.display().to_string());
     }
 
     #[test]

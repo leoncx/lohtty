@@ -3,6 +3,7 @@
 
 mod cwd;
 mod filter;
+mod foreground;
 pub mod input;
 #[cfg(feature = "kitty-graphics")]
 pub mod kitty;
@@ -15,6 +16,7 @@ mod shell;
 pub mod status;
 
 pub use alacritty_terminal;
+pub use cwd::display_dir;
 pub use filter::{OutputFilter, PassThrough, Screen};
-pub use session::{Session, SessionEvent, TermSize};
+pub use session::{Session, SessionEvent, ShellProbe, TermSize};
 pub use shell::{ShellSpec, resolve_shell};

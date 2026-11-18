@@ -20,6 +20,13 @@ image = { version = "0.25", default-features = false, features = ["png"], option
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Whether the shell has a program running (its child processes).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+] }
+
 [features]
 # The kitty graphics protocol (see `kitty` module).
 kitty-graphics = ["dep:base64", "dep:flate2", "dep:image"]

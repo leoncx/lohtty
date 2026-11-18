@@ -7,6 +7,8 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
   Terminal). On Linux lohtty draws its own title bar, with minimize, maximize
   and close buttons, unless the compositor imposes its own. With a single tab, the title bar shows the window
   title, centered. New tabs and splits start in the active pane's directory.
+- While the shell waits at its prompt, its tab (and the window title) shows
+  the current directory, `~` for home; a running program shows its own title.
 - Search (literal or regex, case toggle, highlighted matches)
 - Themes, Tokyo Night by default, with live config reload
 - Background opacity and blur
@@ -278,9 +280,11 @@ Mouse:
   your environment. lohtty passes the environment through unchanged.
 - **Prompt icons show as boxes.** Install a Nerd Font (for example
   *Symbols Nerd Font Mono*) or list one in `font.fallbacks`.
-- **New tabs start in the home directory (Windows).** lohtty can't read
-  another process's directory on Windows, so the shell must report it with
-  OSC 9;9 or OSC 7. In PowerShell, add to your profile:
+- **New tabs start in the home directory, and the title shows no directory
+  (Windows).** lohtty can't read another process's directory on Windows, so
+  the shell must report it with OSC 9;9 or OSC 7. With oh-my-posh, add
+  `pwd: osc99` at the top of its config. In plain PowerShell, add to your
+  profile:
 
   ```powershell
   function prompt {
