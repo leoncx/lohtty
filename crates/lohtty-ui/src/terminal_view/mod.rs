@@ -563,6 +563,11 @@ impl Render for TerminalView {
         };
         let view = cx.entity();
         let focus = self.focus.clone();
+        #[cfg(feature = "kitty-graphics")]
+        let animation_wake = self
+            .images
+            .as_ref()
+            .map(|layer| (layer.animation_wake.clone(), view.downgrade()));
 
         // The search bar sits outside the "Terminal" key context, so terminal
         // bindings (paste...) and key handling don't apply while typing in it.
@@ -599,7 +604,15 @@ impl Render for TerminalView {
                                 view.update(cx, |this, cx| this.on_mouse_up(ev, cx));
                             }
                         });
-                        frame.paint(window, cx)
+                        #[cfg(feature = "kitty-graphics")]
+                        let next_animation_frame = frame.next_animation_frame();
+                        frame.paint(window, cx);
+                        #[cfg(feature = "kitty-graphics")]
+                        if let (Some(at), Some((wake, view))) =
+                            (next_animation_frame, animation_wake)
+                        {
+                            schedule_animation_frame(&wake, at, view, cx);
+                        }
                     },
                 )
                 .size_full(),
@@ -618,6 +631,31 @@ impl Render for TerminalView {
                     .child(s.bar.clone())
             }))
     }
+}
+
+/// Repaints the view at `at`, when an animated image it shows changes
+/// frame, unless a repaint is already due by then.
+#[cfg(feature = "kitty-graphics")]
+fn schedule_animation_frame(
+    wake: &Rc<Cell<Option<Instant>>>,
+    at: Instant,
+    view: gpui::WeakEntity<TerminalView>,
+    cx: &mut App,
+) {
+    if wake.get().is_some_and(|due| due <= at) {
+        return;
+    }
+    wake.set(Some(at));
+    let wake = wake.clone();
+    cx.spawn(async move |cx| {
+        let wait = at.saturating_duration_since(Instant::now());
+        cx.background_executor().timer(wait).await;
+        if wake.get() == Some(at) {
+            wake.set(None);
+        }
+        let _ = view.update(cx, |_, cx| cx.notify());
+    })
+    .detach();
 }
 
 /// The notification for a status that needs the user.

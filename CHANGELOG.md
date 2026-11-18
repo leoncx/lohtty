@@ -33,6 +33,11 @@ version and changelog section, and uses that section as the release notes.
   (Claude Code, Codex, ...) and lohtty isn't in front. Clicking one brings you
   to that pane; the Dock icon bounces and shows how many panes are waiting.
 
+- Kitty graphics animations: programs can send an image's frames and let
+  lohtty play them (`kitty icat some.gif` animates), or switch frames
+  themselves. Frames can be built from earlier ones and composed onto each
+  other. An animation runs only while it is on screen.
+
 ### Changed
 
 - Tabs share the title bar equally (two take half each, three a third).

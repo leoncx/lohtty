@@ -14,6 +14,7 @@
 //! The cost: the cell under each row's first column is overwritten with a
 //! blank, which is usually empty anyway (programs print images on fresh lines).
 
+mod animation;
 mod command;
 mod decode;
 pub mod placeholder;
@@ -22,8 +23,10 @@ mod shm;
 use std::collections::{HashMap, VecDeque};
 use std::io::Write as _;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use crate::filter::{OutputFilter, Screen};
+use animation::{Animation, Run};
 use command::Command;
 
 /// URI scheme of the marker hyperlinks (see the module docs).
@@ -37,13 +40,15 @@ const MAX_COMMAND_BYTES: usize = 400 * 1024 * 1024;
 /// Largest decoded image, in pixels (10000 × 10000).
 const MAX_PIXELS: u64 = 100_000_000;
 
-/// A decoded image, RGBA 8 bits per channel.
+/// A decoded image, RGBA 8 bits per channel: the frame shown, for an
+/// animation.
 #[derive(Clone)]
 pub struct Image {
     pub width: u32,
     pub height: u32,
     pub rgba: Arc<[u8]>,
-    /// Unique per stored image, so caches can tell a re-sent image apart.
+    /// Unique per stored image and frame, so caches can tell a re-sent image
+    /// or another frame apart.
     pub serial: u64,
 }
 
@@ -71,7 +76,11 @@ pub struct Placement {
 
 #[derive(Default)]
 struct State {
+    /// Each image as shown: its current frame when animated.
     images: HashMap<u32, Image>,
+    /// Frames of the images that have more than their root data, or whose
+    /// animation the client controls.
+    animations: HashMap<u32, Animation>,
     /// Insertion order, for eviction.
     order: VecDeque<u32>,
     bytes: usize,
@@ -87,6 +96,9 @@ struct State {
     next_image_id: u32,
     /// Cell size in pixels, as reported to the client.
     cell: (u32, u32),
+    /// The earliest frame change due among the animations looked up since
+    /// the last [`Graphics::take_next_frame`].
+    next_frame: Option<Instant>,
 }
 
 /// Image store shared by the PTY reader (through [`KittyFilter`]) and the UI.
@@ -130,12 +142,19 @@ impl Graphics {
         self.state.lock().unwrap().cell = (width.max(1), height.max(1));
     }
 
-    /// The placement a marker refers to, with its image.
+    /// The placement a marker refers to, with its image. Looking an image
+    /// up to draw it moves its animation on (see [`Graphics::take_next_frame`]).
     pub fn lookup(&self, placement: u64) -> Option<(Placement, Image)> {
-        let state = self.state.lock().unwrap();
-        let p = state.placements.get(&placement)?;
-        let image = state.images.get(&p.image_id)?;
-        Some((p.clone(), image.clone()))
+        let mut state = self.state.lock().unwrap();
+        let p = state.placements.get(&placement)?.clone();
+        let image = shown_image(&mut state, p.image_id, Instant::now())?;
+        Some((p, image))
+    }
+
+    /// When the UI must draw again for an animation it drew since the last
+    /// call to show its next frame, if any.
+    pub fn take_next_frame(&self) -> Option<Instant> {
+        self.state.lock().unwrap().next_frame.take()
     }
 
     /// The virtual placement a placeholder cell refers to: by placement id,
@@ -145,7 +164,7 @@ impl Graphics {
         image_id: u32,
         placement_id: u32,
     ) -> Option<(Placement, Image)> {
-        let state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         let p = if placement_id != 0 {
             state.virtual_placements.get(&(image_id, placement_id))?
         } else {
@@ -155,9 +174,10 @@ impl Graphics {
                 .filter(|((image, _), _)| *image == image_id)
                 .min_by_key(|((_, placement), _)| *placement)?
                 .1
-        };
-        let image = state.images.get(&image_id)?;
-        Some((p.clone(), image.clone()))
+        }
+        .clone();
+        let image = shown_image(&mut state, image_id, Instant::now())?;
+        Some((p, image))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -354,6 +374,25 @@ impl KittyFilter {
                 self.place(&cmd, id, out);
                 Some(id)
             }),
+            b'f' => {
+                // The reply also names the frame (`r`), as kitty's does.
+                let result = self.load_frame(&cmd, payload);
+                if let Err(e) = &result {
+                    tracing::debug!(error = %e, "kitty animation frame failed");
+                }
+                let frame = result.as_ref().map_or(0, |(_, frame)| *frame);
+                respond_with_frame(&cmd, result.map(|(id, _)| Some(id)), frame, reply);
+                return;
+            }
+            b'a' => {
+                // Only failures get a reply.
+                if let Err(e) = self.control(&cmd) {
+                    tracing::debug!(error = %e, "kitty animation control failed");
+                    respond(&cmd, Err(e), reply);
+                }
+                return;
+            }
+            b'c' => self.compose_frames(&cmd).map(|()| None),
             b'd' => {
                 if matches!(
                     cmd.delete.to_ascii_lowercase(),
@@ -456,8 +495,218 @@ impl KittyFilter {
         write_markers(out, serial, rows, cols, !cmd.keep_cursor);
     }
 
+    /// Adds a frame to an image's animation, or edits one (`a=f`): the
+    /// transmitted pixels are composed at `x`, `y` onto the frame being
+    /// edited (`r`), or for a new frame onto a copy of frame `c` or a canvas
+    /// of color `Y`. Returns the image id and the frame number.
+    fn load_frame(&mut self, cmd: &Command, payload: &[u8]) -> Result<(u32, u32), String> {
+        let id = self.resolve(cmd)?;
+        let data = decode::decode(cmd, payload)?;
+        let mut state = self.graphics.state.lock().unwrap();
+        let state = &mut *state;
+        let (iw, ih) = {
+            let image = &state.images[&id];
+            (image.width, image.height)
+        };
+        if data.width > iw || data.height > ih {
+            return Err(format!(
+                "EINVAL:frame of {}x{} larger than the image's {iw}x{ih}",
+                data.width, data.height
+            ));
+        }
+        ensure_animation(state, id);
+        let count = state.animations[&id].frames.len() as u32;
+        let number = if cmd.rows == 0 || cmd.rows > count {
+            count + 1
+        } else {
+            cmd.rows
+        };
+        let rect = animation::Rect {
+            src_x: 0,
+            src_y: 0,
+            dst_x: cmd.x,
+            dst_y: cmd.y,
+            w: data.width,
+            h: data.height,
+        };
+        // `X=1` replaces pixels instead of blending them.
+        let blend = cmd.offset_x != 1;
+        state.next_serial += 1;
+        let serial = state.next_serial;
+        if number == count + 1 {
+            let mut canvas = if cmd.cols != 0 {
+                let frames = &state.animations[&id].frames;
+                let base = frames
+                    .get(cmd.cols as usize - 1)
+                    .ok_or_else(|| format!("EINVAL:no frame with number {}", cmd.cols))?;
+                base.rgba.to_vec()
+            } else {
+                animation::canvas(iw, ih, cmd.offset_y)
+            };
+            animation::compose(&mut canvas, iw, ih, &data.rgba, data.width, rect, blend);
+            make_room(state, id, canvas.len())?;
+            state.bytes += canvas.len();
+            let gap = match cmd.z {
+                0 => animation::DEFAULT_GAP_MS,
+                z => z.max(0) as u32,
+            };
+            let anim = state.animations.get_mut(&id).unwrap();
+            anim.frames.push(animation::Frame {
+                rgba: canvas.into(),
+                gap,
+                serial,
+            });
+        } else {
+            let anim = state.animations.get_mut(&id).unwrap();
+            let frame = &mut anim.frames[number as usize - 1];
+            let mut pixels = frame.rgba.to_vec();
+            animation::compose(&mut pixels, iw, ih, &data.rgba, data.width, rect, blend);
+            frame.rgba = pixels.into();
+            frame.serial = serial;
+            if cmd.z != 0 {
+                frame.gap = cmd.z.max(0) as u32;
+            }
+        }
+        refresh_shown(state, id);
+        Ok((id, number))
+    }
+
+    /// Controls an animation (`a=a`): a frame's gap (`r`, `z`), the current
+    /// frame (`c`), running or stopping (`s`) and the loop count (`v`).
+    fn control(&mut self, cmd: &Command) -> Result<(), String> {
+        let id = self.resolve(cmd)?;
+        let now = Instant::now();
+        let mut state = self.graphics.state.lock().unwrap();
+        let state = &mut *state;
+        ensure_animation(state, id);
+        let anim = state.animations.get_mut(&id).unwrap();
+        if cmd.rows != 0
+            && cmd.z != 0
+            && let Some(frame) = anim.frames.get_mut(cmd.rows as usize - 1)
+        {
+            frame.gap = cmd.z.max(0) as u32;
+        }
+        if cmd.cols != 0 {
+            let index = cmd.cols as usize - 1;
+            if index < anim.frames.len() && index != anim.current {
+                anim.current = index;
+                anim.shown_at = now;
+            }
+        }
+        let run = match cmd.width {
+            1 => Some(Run::Stopped),
+            2 => Some(Run::Loading),
+            3 => Some(Run::Running),
+            _ => None,
+        };
+        if let Some(run) = run {
+            if run != Run::Stopped && anim.run == Run::Stopped {
+                anim.shown_at = now;
+            }
+            anim.run = run;
+            anim.current_loop = 0;
+        }
+        if cmd.height != 0 {
+            anim.max_loops = cmd.height - 1;
+        }
+        refresh_shown(state, id);
+        Ok(())
+    }
+
+    /// Composes a rectangle of frame `r` onto frame `c` (`a=c`).
+    fn compose_frames(&mut self, cmd: &Command) -> Result<(), String> {
+        let id = self.resolve(cmd)?;
+        let mut state = self.graphics.state.lock().unwrap();
+        let state = &mut *state;
+        let (iw, ih) = {
+            let image = &state.images[&id];
+            (image.width, image.height)
+        };
+        ensure_animation(state, id);
+        let anim = &state.animations[&id];
+        let frame = |number: u32, what: &str| {
+            (number as usize)
+                .checked_sub(1)
+                .filter(|&i| i < anim.frames.len())
+                .ok_or_else(|| format!("ENOENT:no {what} frame {number}"))
+        };
+        let src = frame(cmd.rows, "source")?;
+        let dst = frame(cmd.cols, "destination")?;
+        let w = if cmd.w == 0 { iw } else { cmd.w };
+        let h = if cmd.h == 0 { ih } else { cmd.h };
+        let fits = |x: u32, y: u32| {
+            u64::from(x) + u64::from(w) <= u64::from(iw)
+                && u64::from(y) + u64::from(h) <= u64::from(ih)
+        };
+        if !fits(cmd.x, cmd.y) {
+            return Err("EINVAL:the destination rectangle is out of bounds".into());
+        }
+        if !fits(cmd.offset_x, cmd.offset_y) {
+            return Err("EINVAL:the source rectangle is out of bounds".into());
+        }
+        let overlap = cmd.x < cmd.offset_x + w
+            && cmd.offset_x < cmd.x + w
+            && cmd.y < cmd.offset_y + h
+            && cmd.offset_y < cmd.y + h;
+        if src == dst && overlap {
+            return Err("EINVAL:the rectangles overlap in the same frame".into());
+        }
+        let source = anim.frames[src].rgba.clone();
+        let mut pixels = anim.frames[dst].rgba.to_vec();
+        let rect = animation::Rect {
+            src_x: cmd.offset_x,
+            src_y: cmd.offset_y,
+            dst_x: cmd.x,
+            dst_y: cmd.y,
+            w,
+            h,
+        };
+        // `C=1` replaces pixels instead of blending them.
+        animation::compose(&mut pixels, iw, ih, &source, iw, rect, !cmd.keep_cursor);
+        state.next_serial += 1;
+        let serial = state.next_serial;
+        let frame = &mut state.animations.get_mut(&id).unwrap().frames[dst];
+        frame.rgba = pixels.into();
+        frame.serial = serial;
+        refresh_shown(state, id);
+        Ok(())
+    }
+
+    /// Deletes frame `r` of an image (`d=f`/`F`; the root frame when `r` is
+    /// missing, the last one when it is too large). An image with a single
+    /// frame keeps it, unless `F` deletes the whole image.
+    fn delete_frame(&mut self, cmd: &Command) {
+        let Ok(id) = self.resolve(cmd) else {
+            return;
+        };
+        let mut state = self.graphics.state.lock().unwrap();
+        let state = &mut *state;
+        let count = state.animations.get(&id).map_or(1, |a| a.frames.len());
+        if count == 1 {
+            if cmd.delete == b'F' {
+                remove_image(state, id);
+            }
+            return;
+        }
+        let anim = state.animations.get_mut(&id).unwrap();
+        let index = (cmd.rows as usize).clamp(1, count) - 1;
+        let removed = anim.frames.remove(index);
+        if anim.current > index {
+            anim.current -= 1;
+        } else if anim.current == index {
+            anim.current = anim.current.min(anim.frames.len() - 1);
+            anim.shown_at = Instant::now();
+        }
+        state.bytes -= removed.rgba.len();
+        refresh_shown(state, id);
+    }
+
     /// Deletes by id, number, z-index, id range, or everything.
     fn delete(&mut self, cmd: &Command) {
+        if cmd.delete.eq_ignore_ascii_case(&b'f') {
+            self.delete_frame(cmd);
+            return;
+        }
         let state = self.graphics.state.lock().unwrap();
         let doomed: Vec<u64> = match cmd.delete.to_ascii_lowercase() {
             b'a' => state.placements.keys().copied().collect(),
@@ -491,8 +740,7 @@ impl KittyFilter {
                 .filter(|(_, p)| (cmd.x..=cmd.y).contains(&p.image_id))
                 .map(|(s, _)| *s)
                 .collect(),
-            // By position: see `delete_at`. Others (animation frames) don't
-            // apply.
+            // By position: see `delete_at`.
             _ => Vec::new(),
         };
         // Virtual placements go with the same selections (they have no
@@ -654,7 +902,10 @@ fn placement_for(state: &State, cmd: &Command, image_id: u32) -> Option<Placemen
 
 fn remove_image(state: &mut State, id: u32) {
     if let Some(old) = state.images.remove(&id) {
-        state.bytes -= old.rgba.len();
+        state.bytes -= match state.animations.remove(&id) {
+            Some(anim) => anim.frames.iter().map(|f| f.rgba.len()).sum(),
+            None => old.rgba.len(),
+        };
         state.order.retain(|&i| i != id);
         state.placements.retain(|_, p| p.image_id != id);
         state.keyed.retain(|(image, _), _| *image != id);
@@ -662,6 +913,52 @@ fn remove_image(state: &mut State, id: u32) {
             .virtual_placements
             .retain(|(image, _), _| *image != id);
     }
+}
+
+/// Gives an image its frame list, with the root frame only, if it has none.
+fn ensure_animation(state: &mut State, id: u32) {
+    if let Some(image) = state.images.get(&id) {
+        state
+            .animations
+            .entry(id)
+            .or_insert_with(|| Animation::new(image.rgba.clone(), image.serial));
+    }
+}
+
+/// Shows an animation's current frame as the image.
+fn refresh_shown(state: &mut State, id: u32) {
+    if let (Some(anim), Some(image)) = (state.animations.get(&id), state.images.get_mut(&id)) {
+        let frame = &anim.frames[anim.current];
+        image.rgba = frame.rgba.clone();
+        image.serial = frame.serial;
+    }
+}
+
+/// An image as it is to be drawn now: its animation moves on first, and
+/// the time of its next frame is noted for [`Graphics::take_next_frame`].
+fn shown_image(state: &mut State, id: u32, now: Instant) -> Option<Image> {
+    if let Some(anim) = state.animations.get_mut(&id) {
+        let (changed, next) = anim.tick(now);
+        if changed {
+            refresh_shown(state, id);
+        }
+        if let Some(next) = next {
+            state.next_frame = Some(state.next_frame.map_or(next, |n| n.min(next)));
+        }
+    }
+    state.images.get(&id).cloned()
+}
+
+/// Frees older images until `size` more bytes fit the quota; the image
+/// `keep` is never evicted.
+fn make_room(state: &mut State, keep: u32, size: usize) -> Result<(), String> {
+    while state.bytes + size > QUOTA_BYTES {
+        let Some(oldest) = state.order.iter().copied().find(|&i| i != keep) else {
+            return Err("ENOSPC:image storage quota exceeded".into());
+        };
+        remove_image(state, oldest);
+    }
+    Ok(())
 }
 
 /// One marker per image row (see the module docs). With `move_cursor`, the
@@ -697,6 +994,16 @@ fn write_markers(out: &mut Vec<u8>, serial: u64, rows: u32, cols: u32, move_curs
 /// Replies like kitty: only when the client named the image (`i` or `I`),
 /// and not when quieted (`q=1` hides OK, `q=2` hides everything).
 fn respond(cmd: &Command, result: Result<Option<u32>, String>, reply: &mut Vec<u8>) {
+    respond_with_frame(cmd, result, 0, reply);
+}
+
+/// [`respond`], naming a frame number (`r`) when it isn't 0.
+fn respond_with_frame(
+    cmd: &Command,
+    result: Result<Option<u32>, String>,
+    frame: u32,
+    reply: &mut Vec<u8>,
+) {
     if cmd.id == 0 && cmd.number == 0 {
         return;
     }
@@ -722,6 +1029,10 @@ fn respond(cmd: &Command, result: Result<Option<u32>, String>, reply: &mut Vec<u
     }
     if cmd.placement != 0 {
         let _ = write!(reply, "{sep}p={}", cmd.placement);
+        sep = ",";
+    }
+    if frame != 0 {
+        let _ = write!(reply, "{sep}r={frame}");
     }
     let _ = write!(reply, ";{message}\x1b\\");
 }

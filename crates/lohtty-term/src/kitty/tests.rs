@@ -487,3 +487,253 @@ fn deletes_remove_virtual_placements() {
     assert!(g.virtual_placement(4, 0).is_none());
     assert!(!g.state.lock().unwrap().images.contains_key(&4));
 }
+
+/// The frames of image `id`, as RGBA bytes, with their gaps.
+fn frames(g: &Graphics, id: u32) -> Vec<(Vec<u8>, u32)> {
+    let state = g.state.lock().unwrap();
+    state.animations[&id]
+        .frames
+        .iter()
+        .map(|f| (f.rgba.to_vec(), f.gap))
+        .collect()
+}
+
+/// `n` pixels of an RGBA color given as `0xRRGGBBAA`.
+fn px(color: u32, n: usize) -> Vec<u8> {
+    color.to_be_bytes().repeat(n)
+}
+
+fn pixels(colors: &[u32]) -> Vec<u8> {
+    colors.iter().flat_map(|c| c.to_be_bytes()).collect()
+}
+
+const RED: u32 = 0xff0000ff;
+const GREEN: u32 = 0x00ff00ff;
+const BLUE: u32 = 0x0000ffff;
+
+#[test]
+fn frames_are_composed_on_a_base_frame_or_a_color() {
+    let g = Graphics::new();
+    run(&g, &apc("a=t,i=1,s=2,v=1", &px(RED, 2)), false);
+    // On a copy of frame 1, a green pixel at x=1: the reply names frame 2.
+    let (_, reply) = run(&g, &apc("a=f,i=1,c=1,x=1,s=1,v=1", &px(GREEN, 1)), false);
+    assert_eq!(reply, b"\x1b_Gi=1,r=2;OK\x1b\\");
+    // On a blue canvas, with its own gap.
+    let control = format!("a=f,i=1,Y={BLUE},s=1,v=1,z=120");
+    let (_, reply) = run(&g, &apc(&control, &px(GREEN, 1)), false);
+    assert_eq!(reply, b"\x1b_Gi=1,r=3;OK\x1b\\");
+    // Editing frame 2 (r=2) in place, made gapless (negative gap).
+    let (_, reply) = run(&g, &apc("a=f,i=1,r=2,s=1,v=1,z=-1", &px(BLUE, 1)), false);
+    assert_eq!(reply, b"\x1b_Gi=1,r=2;OK\x1b\\");
+    assert_eq!(
+        frames(&g, 1),
+        vec![
+            (px(RED, 2), 0),
+            (pixels(&[BLUE, GREEN]), 0),
+            (pixels(&[GREEN, BLUE]), 120),
+        ]
+    );
+    // The image still shows its root frame.
+    assert_eq!(
+        &g.state.lock().unwrap().images[&1].rgba[..],
+        &px(RED, 2)[..]
+    );
+}
+
+#[test]
+fn new_frames_get_the_default_gap() {
+    let g = Graphics::new();
+    run(&g, &apc("a=t,i=1,s=1,v=1", &px(RED, 1)), false);
+    run(&g, &apc("a=f,i=1,s=1,v=1", &px(GREEN, 1)), false);
+    assert_eq!(frames(&g, 1)[1].1, 40);
+}
+
+#[test]
+fn frames_blend_unless_replacing() {
+    let g = Graphics::new();
+    run(&g, &apc("a=t,i=1,s=1,v=1", &px(RED, 1)), false);
+    let clear = 0x00ff0000; // transparent green
+    run(&g, &apc("a=f,i=1,c=1,s=1,v=1", &px(clear, 1)), false);
+    run(&g, &apc("a=f,i=1,c=1,X=1,s=1,v=1", &px(clear, 1)), false);
+    let f = frames(&g, 1);
+    assert_eq!(f[1].0, px(RED, 1));
+    assert_eq!(f[2].0, px(clear, 1));
+}
+
+#[test]
+fn frame_errors_reply() {
+    let g = Graphics::new();
+    let (_, reply) = run(&g, &apc("a=f,i=5,s=1,v=1", &px(RED, 1)), false);
+    assert!(reply.starts_with(b"\x1b_Gi=5;ENOENT:"));
+    run(&g, &apc("a=t,i=5,s=1,v=1", &px(RED, 1)), false);
+    // Larger than the image.
+    let (_, reply) = run(&g, &apc("a=f,i=5,s=2,v=1", &px(RED, 2)), false);
+    assert!(reply.starts_with(b"\x1b_Gi=5;EINVAL:"), "{reply:?}");
+    // No such base frame.
+    let (_, reply) = run(&g, &apc("a=f,i=5,c=9,s=1,v=1", &px(RED, 1)), false);
+    assert!(reply.starts_with(b"\x1b_Gi=5;EINVAL:"), "{reply:?}");
+    assert_eq!(frames(&g, 5).len(), 1);
+}
+
+#[test]
+fn chunked_frames_and_image_numbers() {
+    let g = Graphics::new();
+    let (_, reply) = run(&g, &apc("a=t,I=3,s=2,v=1", &px(RED, 2)), false);
+    let id = u32::MAX;
+    assert_eq!(reply, format!("\x1b_Gi={id},I=3;OK\x1b\\").into_bytes());
+    let data = STANDARD.encode(px(GREEN, 2));
+    let (a, b) = data.split_at(4);
+    let mut input = format!("\x1b_Ga=f,I=3,s=2,v=1,m=1;{a}\x1b\\").into_bytes();
+    input.extend(format!("\x1b_Gm=0;{b}\x1b\\").into_bytes());
+    let (_, reply) = run(&g, &input, true);
+    assert_eq!(reply, format!("\x1b_Gi={id},I=3,r=2;OK\x1b\\").into_bytes());
+    assert_eq!(frames(&g, id)[1].0, px(GREEN, 2));
+}
+
+#[test]
+fn control_runs_the_animation_when_drawn() {
+    let ms = std::time::Duration::from_millis;
+    let g = Graphics::new();
+    run(&g, &apc("a=T,i=1,s=1,v=1", &px(RED, 1)), false);
+    run(&g, &apc("a=f,i=1,s=1,v=1,z=50", &px(GREEN, 1)), false);
+    let placement = *g.state.lock().unwrap().placements.keys().next().unwrap();
+    // Stopped: drawing shows the root frame and asks for no wake-up.
+    let (_, image) = g.lookup(placement).unwrap();
+    assert_eq!(&image.rgba[..], &px(RED, 1)[..]);
+    assert!(g.take_next_frame().is_none());
+    // Control commands get no reply when they succeed. The root frame has no
+    // gap until the client gives it one.
+    let (_, reply) = run(&g, &apc("a=a,i=1,r=1,z=30", b""), false);
+    assert!(reply.is_empty());
+    let (_, reply) = run(&g, &apc("a=a,i=1,s=3", b""), false);
+    assert!(reply.is_empty());
+    let start = g.state.lock().unwrap().animations[&1].shown_at;
+    let shown = |at: u64| {
+        let mut state = g.state.lock().unwrap();
+        let image = shown_image(&mut state, 1, start + ms(at)).unwrap();
+        (image.rgba.to_vec(), image.serial)
+    };
+    let (root, root_serial) = shown(10);
+    assert_eq!(root, px(RED, 1));
+    assert_eq!(g.take_next_frame(), Some(start + ms(30)));
+    assert!(g.take_next_frame().is_none());
+    let (second, second_serial) = shown(30);
+    assert_eq!(second, px(GREEN, 1));
+    assert_ne!(second_serial, root_serial);
+    assert_eq!(g.take_next_frame(), Some(start + ms(80)));
+    assert_eq!(shown(80).0, px(RED, 1));
+    assert!(g.take_next_frame().is_some());
+    // Choosing a frame, then stopping.
+    run(&g, &apc("a=a,i=1,c=2,s=1", b""), false);
+    assert_eq!(shown(10_000).0, px(GREEN, 1));
+    assert!(g.take_next_frame().is_none());
+    // An unknown image is an error.
+    let (_, reply) = run(&g, &apc("a=a,i=9,s=3", b""), false);
+    assert!(reply.starts_with(b"\x1b_Gi=9;ENOENT:"));
+}
+
+#[test]
+fn frames_compose_onto_each_other() {
+    let g = Graphics::new();
+    run(&g, &apc("a=t,i=1,s=2,v=2", &px(RED, 4)), false);
+    let control = format!("a=f,i=1,Y={BLUE},s=1,v=1,X=1");
+    run(&g, &apc(&control, &px(BLUE, 1)), false);
+    // A 1×1 rectangle of frame 1 at (0, 0) onto frame 2 at (1, 1).
+    let (_, reply) = run(&g, &apc("a=c,i=1,r=1,c=2,w=1,h=1,x=1,y=1", b""), false);
+    assert_eq!(reply, b"\x1b_Gi=1;OK\x1b\\");
+    assert_eq!(frames(&g, 1)[1].0, pixels(&[BLUE, BLUE, BLUE, RED]));
+    for (control, error) in [
+        // Missing source or destination frame.
+        ("a=c,i=1,r=3,c=2", "ENOENT"),
+        ("a=c,i=1,r=1,c=3", "ENOENT"),
+        // Destination or source out of bounds.
+        ("a=c,i=1,r=1,c=2,w=2,h=1,x=1", "EINVAL"),
+        ("a=c,i=1,r=1,c=2,w=1,h=1,X=2", "EINVAL"),
+        // Overlapping rectangles in the same frame.
+        ("a=c,i=1,r=2,c=2", "EINVAL"),
+    ] {
+        let (_, reply) = run(&g, &apc(control, b""), false);
+        let prefix = format!("\x1b_Gi=1;{error}:");
+        assert!(reply.starts_with(prefix.as_bytes()), "{control}: {reply:?}");
+    }
+    // The same frame, rectangles apart: the bottom-right pixel replaces the
+    // top-left one.
+    let (_, reply) = run(&g, &apc("a=c,i=1,r=2,c=2,w=1,h=1,X=1,Y=1,C=1", b""), false);
+    assert_eq!(reply, b"\x1b_Gi=1;OK\x1b\\");
+    assert_eq!(frames(&g, 1)[1].0, pixels(&[RED, BLUE, BLUE, RED]));
+}
+
+#[test]
+fn composing_onto_the_shown_frame_updates_the_image() {
+    let g = Graphics::new();
+    run(&g, &apc("a=t,i=1,s=1,v=1", &px(RED, 1)), false);
+    run(&g, &apc("a=f,i=1,s=1,v=1", &px(GREEN, 1)), false);
+    let before = g.state.lock().unwrap().images[&1].serial;
+    run(&g, &apc("a=c,i=1,r=2,c=1,C=1", b""), false);
+    let state = g.state.lock().unwrap();
+    assert_eq!(&state.images[&1].rgba[..], &px(GREEN, 1)[..]);
+    assert_ne!(state.images[&1].serial, before);
+}
+
+#[test]
+fn deleting_frames() {
+    let g = Graphics::new();
+    run(&g, &apc("a=t,i=1,s=1,v=1", &px(RED, 1)), false);
+    for color in [GREEN, BLUE] {
+        run(&g, &apc("a=f,i=1,s=1,v=1", &px(color, 1)), false);
+    }
+    assert_eq!(g.state.lock().unwrap().bytes, 12);
+    // Show frame 3, then delete frame 2: frame 3 stays shown.
+    run(&g, &apc("a=a,i=1,c=3", b""), false);
+    run(&g, &apc("a=d,d=f,i=1,r=2", b""), false);
+    let colors: Vec<_> = frames(&g, 1).into_iter().map(|f| f.0).collect();
+    assert_eq!(colors, vec![px(RED, 1), px(BLUE, 1)]);
+    {
+        let state = g.state.lock().unwrap();
+        assert_eq!(state.animations[&1].current, 1);
+        assert_eq!(&state.images[&1].rgba[..], &px(BLUE, 1)[..]);
+        assert_eq!(state.bytes, 8);
+    }
+    // No `r`: the root frame goes, and the next one becomes the root.
+    run(&g, &apc("a=d,d=f,i=1", b""), false);
+    assert_eq!(frames(&g, 1).len(), 1);
+    assert_eq!(
+        &g.state.lock().unwrap().images[&1].rgba[..],
+        &px(BLUE, 1)[..]
+    );
+    // The last frame stays with `f`, and goes with the image with `F`.
+    run(&g, &apc("a=d,d=f,i=1", b""), false);
+    assert!(g.state.lock().unwrap().images.contains_key(&1));
+    run(&g, &apc("a=d,d=F,i=1", b""), false);
+    let state = g.state.lock().unwrap();
+    assert!(state.images.is_empty() && state.animations.is_empty());
+    assert_eq!(state.bytes, 0);
+}
+
+#[test]
+fn resending_an_image_drops_its_frames() {
+    let g = Graphics::new();
+    run(&g, &apc("a=t,i=1,s=1,v=1", &px(RED, 1)), false);
+    run(&g, &apc("a=f,i=1,s=1,v=1", &px(GREEN, 1)), false);
+    run(&g, &apc("a=t,i=1,s=1,v=1", &px(BLUE, 1)), false);
+    let state = g.state.lock().unwrap();
+    assert!(state.animations.is_empty());
+    assert_eq!(state.bytes, 4);
+}
+
+#[test]
+fn frames_count_toward_the_quota() {
+    let g = Graphics::new();
+    run(&g, &apc("a=t,i=1,s=1,v=1", &px(RED, 1)), false);
+    run(&g, &apc("a=t,i=2,s=1,v=1", &px(RED, 1)), false);
+    g.state.lock().unwrap().bytes = QUOTA_BYTES - 3;
+    // A new frame of image 2 evicts image 1, the oldest.
+    let (_, reply) = run(&g, &apc("a=f,i=2,s=1,v=1", &px(GREEN, 1)), false);
+    assert_eq!(reply, b"\x1b_Gi=2,r=2;OK\x1b\\");
+    assert!(!g.state.lock().unwrap().images.contains_key(&1));
+    // Nothing else to evict: the frame is refused.
+    g.state.lock().unwrap().bytes = QUOTA_BYTES - 2;
+    let (_, reply) = run(&g, &apc("a=f,i=2,s=1,v=1", &px(GREEN, 1)), false);
+    assert!(reply.starts_with(b"\x1b_Gi=2;ENOSPC:"), "{reply:?}");
+    assert_eq!(frames(&g, 2).len(), 2);
+}

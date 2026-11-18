@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use gpui::{Bounds, ContentMask, Pixels, RenderImage, Window, point, px, size};
 use lohtty_term::alacritty_terminal::term::cell::Cell;
@@ -87,6 +88,8 @@ pub(super) struct ImageCache {
 pub(super) struct ImageLayer {
     pub graphics: Graphics,
     pub cache: Rc<RefCell<ImageCache>>,
+    /// When the repaint already scheduled for an animation is due.
+    pub animation_wake: Rc<std::cell::Cell<Option<Instant>>>,
 }
 
 /// One image to draw this frame.
@@ -102,6 +105,8 @@ pub(super) struct ImageDraw {
 pub(super) struct ImageFrame {
     pub draws: Vec<ImageDraw>,
     released: Vec<Arc<RenderImage>>,
+    /// When an animation drawn in this frame shows its next frame.
+    pub next_animation_frame: Option<Instant>,
 }
 
 impl ImageLayer {
@@ -109,6 +114,7 @@ impl ImageLayer {
         Self {
             graphics,
             cache: Rc::default(),
+            animation_wake: Rc::default(),
         }
     }
 
@@ -295,7 +301,11 @@ impl ImageLayer {
             }
             keep
         });
-        ImageFrame { draws, released }
+        ImageFrame {
+            draws,
+            released,
+            next_animation_frame: self.graphics.take_next_frame(),
+        }
     }
 }
 

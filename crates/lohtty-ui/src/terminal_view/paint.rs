@@ -762,6 +762,12 @@ fn glyph_for(
 }
 
 impl Frame {
+    /// When an animated image drawn in this frame changes next.
+    #[cfg(feature = "kitty-graphics")]
+    pub fn next_animation_frame(&self) -> Option<Instant> {
+        self.images.next_animation_frame
+    }
+
     pub fn paint(self, window: &mut Window, cx: &mut App) {
         let started = Instant::now();
         self.paint_inner(window, cx);

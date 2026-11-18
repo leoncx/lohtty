@@ -27,7 +27,7 @@ best-effort), written in Rust with [gpui](https://gpui.rs).
 - Attention alerts for coding agents and other programs: a tab mark, and a
   desktop notification when lohtty isn't in front (Windows and macOS)
 - Images through the kitty graphics protocol (PNG, RGB/RGBA; direct, file and
-  temporary-file transfer)
+  temporary-file transfer), animations included (`kitty icat` plays a GIF)
 - PowerShell by default, any shell configurable
 
 ## Install
