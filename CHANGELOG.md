@@ -11,6 +11,8 @@ version and changelog section, and uses that section as the release notes.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-19
+
 ### Added
 
 - While the shell is at its prompt, the tab and window title show its
