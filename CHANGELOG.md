@@ -47,6 +47,9 @@ version and changelog section, and uses that section as the release notes.
   Windows updates make the system's ConPTY drop them, so lohtty now ships
   Microsoft's ConPTY (`conpty.dll` and `OpenConsole.exe`, MIT) next to
   `lohtty.exe`, in the zip and the installer.
+- Search highlights every match on screen again when nothing has scrolled
+  off the top yet (a new tab, or after `clear`); only the current match
+  was highlighted.
 
 ## [0.3.0] - 2026-11-13
 

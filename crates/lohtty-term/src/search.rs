@@ -68,8 +68,10 @@ pub fn matches_in_lines<T>(
     first: Point,
     last: Point,
 ) -> Vec<Match> {
-    // Start a little earlier so matches wrapping in from above are found.
-    let start = first.sub(term, Boundary::None, term.columns());
+    // Start a little earlier so matches wrapping in from above are found,
+    // stopping at the top of the scrollback: wrapping around to the bottom
+    // would skip everything on screen when there is no history.
+    let start = first.sub(term, Boundary::Grid, term.columns());
     RegexIter::new(start, last, Direction::Right, term, regex)
         .filter(|m| *m.end() >= first)
         .collect()
@@ -198,5 +200,20 @@ mod tests {
         );
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].start().line, Line(1));
+    }
+
+    #[test]
+    fn matches_in_lines_from_the_top_without_history() {
+        // No scrollback: the range starts at the topmost line.
+        let term = mock_term("x1\r\nx2\r\nx3");
+        let mut regex = query("x").compile().unwrap().unwrap();
+        let found = matches_in_lines(
+            &term,
+            &mut regex,
+            Point::new(Line(0), Column(0)),
+            Point::new(Line(2), term.last_column()),
+        );
+        let lines: Vec<_> = found.iter().map(|m| m.start().line).collect();
+        assert_eq!(lines, [Line(0), Line(1), Line(2)]);
     }
 }
