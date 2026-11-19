@@ -151,7 +151,9 @@ jobs:
           "$app/Contents/MacOS/lohtty" & pid=$!
           sleep 5
           kill -0 $pid || { wait $pid; echo "lohtty exited early ($?)"; exit 1; }
+          # Let it exit before detaching, or the volume is still busy.
           kill $pid
+          wait $pid || true
           hdiutil detach "$RUNNER_TEMP/dmg"
       - uses: actions/upload-artifact@v4
         with:
