@@ -37,15 +37,17 @@ if ($actual -ne $Sha256) {
     Remove-Item $package
     throw "ConPTY package hash mismatch: got $actual, expected $Sha256"
 }
-if (-not (Test-Path $unpacked)) {
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [IO.Compression.ZipFile]::ExtractToDirectory($package, $unpacked)
-}
-
 $files = @(
     (Join-Path $unpacked "runtimes/win-$Arch/native/conpty.dll"),
     (Join-Path $unpacked "build/native/runtimes/$Arch/OpenConsole.exe")
 )
+# Extract again when a file is missing: a restored build cache (CI) can
+# bring back the folder without everything in it.
+if (@($files | Where-Object { -not (Test-Path $_) }).Count -gt 0) {
+    if (Test-Path $unpacked) { Remove-Item -Recurse -Force $unpacked }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($package, $unpacked)
+}
 foreach ($file in $files) {
     $signature = Get-AuthenticodeSignature $file
     if ($signature.Status -ne 'Valid' -or
